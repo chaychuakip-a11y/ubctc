@@ -1,0 +1,3 @@
+source /home3/asrdictt/taoyu/bashrc_mxnet
+nohup perl checkstuck.pl ./mlp/log98.log ./mlp/dcnn-0-0098.params 90 ./mlp & 
+python dmlc-submit --cluster mpi --num-servers 16 --num-workers 16 python train_dcnn.py --kv-store dist_device_sync --model-prefix ./mlp/dcnn --optimizer NAG --sync-freq 50 --wd 1e-05 --alpha 1 --blr 1 --bm 0.94 --frame-num 4096 --pad-num 16 --network att --frame-predict 8 --use-bmuf True --multi-node True --ngpu-per-worker 8 --window-width 31 --pad-between 8 --num-classes 9004 --lmdbdir /train34/sli/permanent/taoyu/mlg/korean/am/4_cnn_fb40/1_down_pfile/lmdb_fb40 --epoch-size 419625 --load-epoch 97 --lr 9.765625e-06 --seed 27864625 --num-epochs 98 --part-id 7 

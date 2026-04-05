@@ -1,0 +1,16 @@
+perl 1_dnnfa.pl
+perl 2.0_GenSeedMlf.pl
+perl 2.1_AddNoise_car_byd.5db.20.pl
+perl 2.1_AddNoise_car_dz.5db.20.pl
+perl 2.1_AddNoise_duodian.5db.10.pl
+perl 2.1_AddNoise_gs.5db.20.pl
+perl 2.1_AddNoise_jiaju.5db.10.pl
+perl 2.1_AddNoise_music_a.5db.2.pl
+perl 2.1_AddNoise_music_b.5db.2.pl
+perl 2.1_AddNoise_music_c.5db.2.pl
+perl 2.1_AddNoise_music_onenoise.5db.2.pl
+perl 2.1_AddNoise_music_tv.5db.2.pl
+perl 2.1_AddNoise_pingwen.5db.10.pl
+perl 3.0_speedup1.2.pl
+perl 3.1_dnnfa.pl
+perl 4.0_amp.pl
