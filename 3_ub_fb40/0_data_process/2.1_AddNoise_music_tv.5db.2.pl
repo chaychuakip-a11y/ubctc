@@ -1,19 +1,27 @@
 use strict;
 
+require "./utils.pl";
+my $config_data = load_config();
+
 use lib "/work1/asrdictt/taoyu/sbin";
 use share_hadoop;
 
 my $jobname0     = "AddNoise_music_tv";
-my $jobqueue     = "nlp";
+my $jobqueue          = $config_data->{jobqueue} || "nlp";
 my $num_reduce   = 10;
 my $in_blocksize = 512*1024*1024;
 my $block_size   = 64*1024*1024;
 my $replication  = 2;
 
-my @hdir_src     = (
-                   "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_dnnfa/*-part-*[8-9]8",
+
+my @hdir_src; if (@ARGV > 0) {
+    @hdir_src = ($ARGV[0]);
+} else {
+    @hdir_src = (
+                   "$config_data->{hdfs_out_root}/17kh_wav_dnnfa/*-part-*[8-9]8",
                    );
-my $hdir_out     = "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_addnoise_music_tv_0.02.wav_dnnfa";
+}
+my $hdir_out     = "$config_data->{hdfs_out_root}/17kh_wav_addnoise_music_tv_0.02.wav_dnnfa";
 my $hdir_src     = join(" -input ", @hdir_src);
 my $dir_tmp      = "tmp"; mkdir $dir_tmp if !-e $dir_tmp;
 foreach my $hdir_cur (@hdir_src)
@@ -43,7 +51,7 @@ if(@ARGV >= 1)
 	print "split: @splits\n";
 }
 
-my $bin_stream       = "/work1/asrdictt/taoyu/bin/streamingAC-2.5.0.jar";
+my $bin_stream         = "$config_data->{dir_bin}/streamingAC-2.5.0.jar";
 my $bin_addnoise     = "/work1/asrdictt/taoyu/bin/AddNoise";
 my $bin_easytraining = "/work1/asrdictt/taoyu/bin/easytraining";
 my $bin_selectrecord = "/work1/asrdictt/taoyu/bin/selectrecord";

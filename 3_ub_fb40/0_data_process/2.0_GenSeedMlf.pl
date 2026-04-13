@@ -1,12 +1,20 @@
 use strict;
+
+require "./utils.pl";
+my $config_data = load_config();
 use List::Util 'shuffle';
 
-my $hdir     = "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_dnnfa";
+my $hdir     = "$config_data->{hdfs_out_root}/17kh_wav_dnnfa";
 my $nSplit   = 10;
 my $nPart    = 100;
 my $dir_out  = "out";
 
-my @hdir_src = ($hdir);
+
+my @hdir_src; if (@ARGV > 0) {
+    @hdir_src = ($ARGV[0]);
+} else {
+    @hdir_src = ($hdir);
+}
 foreach my $hdir_cur (@hdir_src)
 {
 	if($hdir_cur =~ /\*/ && $hdir_cur =~ /part/)

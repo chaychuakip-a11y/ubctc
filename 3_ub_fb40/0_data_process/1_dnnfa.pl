@@ -1,23 +1,31 @@
 use strict;
 
+require "./utils.pl";
+my $config_data = load_config();
+
 use lib "/work1/asrdictt/taoyu/sbin";
 use share_hadoop;
 
 my $jobname           = "dnnfa_base";#SET
-my $jobqueue          = "nlp";#SET
+my $jobqueue          = $config_data->{jobqueue} || "nlp";#SET
 my $num_reduce        = 100;
 my $in_blocksize      = 512*1024*1024;
 my $block_size        = 64*1024*1024;
 my $replication       = 2;
 
-my @hdir_src          = (
-                         "/workdir/asrdictt/dasrdictt/taoyu/mlg/korean/korean_tx_6.7kh",   ### 7000H
-                         "/workdir/asrdictt/dasrdictt/taoyu/mlg/korean/korean_zx_11.4kh",  ### 4000H
-                         "/workdir/asrdictt/dasrdictt/taoyu/mlg/korean/korean_lyb_490h",
-                         "/workdir/asrdictt/dasrdictt/taoyu/mlg/korean/korean_kaiyuan_tx_32.9kh/*part-000*",     ### 100/800,  4000H
-                         "/workdir/asrdictt/dasrdictt/taoyu/mlg/korean/korean_kaiyuan_zx_6.5kh/*part-000[0-1]?", ### 2/8, 1000H
+my @hdir_src;
+my @hdir_src; if (@ARGV > 0) {
+    @hdir_src = ($ARGV[0]);
+} else {
+    @hdir_src          = (
+                         "$config_data->{hdfs_src_root}/korean_tx_6.7kh",   ### 7000H
+                         "$config_data->{hdfs_src_root}/korean_zx_11.4kh",  ### 4000H
+                         "$config_data->{hdfs_src_root}/korean_lyb_490h",
+                         "$config_data->{hdfs_src_root}/korean_kaiyuan_tx_32.9kh/*part-000*",     ### 100/800,  4000H
+                         "$config_data->{hdfs_src_root}/korean_kaiyuan_zx_6.5kh/*part-000[0-1]?", ### 2/8, 1000H
                         );
-my $hdir_out          = ("/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_dnnfa");
+}
+my $hdir_out          = ("$config_data->{hdfs_out_root}/17kh_wav_dnnfa");
 my $hdir_src          = join(" -input ", @hdir_src);
 my $dir_tmp           = "tmp"; mkdir $dir_tmp if !-e $dir_tmp;
 
@@ -53,7 +61,7 @@ my $dec_thread_nums   = 1;  #advise: set 1-4 if running on hadoop, 1-12 if runni
 my $thread_nums       = $mlp_thread_nums + $dec_thread_nums;
 
 ##tools
-my $dir_bin            = "/work1/asrdictt/taoyu/bin";
+my $dir_bin            = $config_data->{dir_bin};
 my $bin_stream         = "$dir_bin/streamingAC-2.5.0.jar";
 my $bin_selecttail     = "$dir_bin/selecttail";
 my $bin_renametail     = "$dir_bin/renametail";

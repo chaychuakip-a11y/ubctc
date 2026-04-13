@@ -1,0 +1,12 @@
+{
+  "hdfs_src_root": "/workdir/asrdictt/dasrdictt/taoyu/mlg/korean",
+  "hdfs_out_root": "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean",
+  "jobqueue": "nlp",
+  "dir_bin": "/work1/asrdictt/taoyu/bin",
+  "dir_ac": "/work1/asrdictt/taoyu/mlg/korean/am/1_mle_mfc/final_s9k",
+  "dir_lm": "/work1/asrdictt/taoyu/mlg/korean/res/res_fa/out_package_1gram",
+  "wts_file": "/work1/asrdictt/taoyu/mlg/korean/am/2_dnn_fb72/3_train/mlp-ring-h2048_2048_2048_2048_2048_2048_512-cw11-targ9004-step1_b4096_jumpframe3-2-5_discard0/mlp.99.wts.merge",
+  "fea_norm": "/work1/asrdictt/taoyu/mlg/korean/am/2_dnn_fb72/1_down_pfile/lib_fb72/fea.norm",
+  "state_count": "/work1/asrdictt/taoyu/mlg/korean/am/2_dnn_fb72/1_down_pfile/lib_fb72/states.count.low100.txt",
+  "atom_config": "/work1/asrdictt/taoyu/bin/atom-v20151016b/atom_hadoop_dnnfa.fb72.cfg"
+}

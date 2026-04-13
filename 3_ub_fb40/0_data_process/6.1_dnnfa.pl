@@ -1,19 +1,27 @@
 use strict;
 
+require "./utils.pl";
+my $config_data = load_config();
+
 use lib "/work1/asrdictt/taoyu/sbin";
 use share_hadoop;
 
 my $jobname           = "dnnfa_lsa";#SET
-my $jobqueue          = "nlp";#SET
+my $jobqueue          = $config_data->{jobqueue} || "nlp";#SET
 my $num_reduce        = 10;
 my $in_blocksize      = 512*1024*1024;
 my $block_size        = 64*1024*1024;
 my $replication       = 2;
 
-my @hdir_src          = (
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_noisy_lsa_0.2.wav",
+
+my @hdir_src; if (@ARGV > 0) {
+    @hdir_src = ($ARGV[0]);
+} else {
+    @hdir_src = (
+                         "$config_data->{hdfs_out_root}/17kh_wav_noisy_lsa_0.2.wav",
                         );
-my $hdir_out          = ("/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_noisy_lsa_0.2.wav_dnnfa");
+}
+my $hdir_out          = ("$config_data->{hdfs_out_root}/17kh_wav_noisy_lsa_0.2.wav_dnnfa");
 my $hdir_src          = join(" -input ", @hdir_src);
 my $dir_tmp           = "tmp"; mkdir $dir_tmp if !-e $dir_tmp;
 foreach my $hdir_cur (@hdir_src)
@@ -58,7 +66,7 @@ my $dec_thread_nums   = 1;  #advise: set 1-4 if running on hadoop, 1-12 if runni
 my $thread_nums       = $mlp_thread_nums + $dec_thread_nums;
 
 ##tools
-my $dir_bin            = "/work1/asrdictt/taoyu/bin";
+my $dir_bin            = $config_data->{dir_bin};
 my $bin_stream         = "$dir_bin/streamingAC-2.5.0.jar";
 my $bin_selecttail     = "$dir_bin/selecttail";
 my $bin_renametail     = "$dir_bin/renametail";

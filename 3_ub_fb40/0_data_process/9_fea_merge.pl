@@ -1,35 +1,43 @@
 use strict;
 
+require "./utils.pl";
+my $config_data = load_config();
+
 use lib "/work1/asrdictt/taoyu/sbin";
 use share_hadoop;
 
 my $jobname           = "merge_all";#SET
-my $jobqueue          = "nlp";#SET
+my $jobqueue          = $config_data->{jobqueue} || "nlp";#SET
 my $num_reduce        = 100;
 my $in_blocksize      = 512*1024*1024;
 my $block_size        = 64*1024*1024;
 my $replication       = 2;
 
-my @hdir_src          = (
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_addnoise_car_byd_0.2.wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_addnoise_car_dz_0.2.wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_addnoise_duodian_0.1.wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_addnoise_gs_0.2.wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_addnoise_jiaju_0.1.wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_addnoise_music_a_0.02.wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_addnoise_music_b_0.02.wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_addnoise_music_c_0.02.wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_addnoise_music_onenoise_0.02.wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_addnoise_music_tv_0.02.wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_addnoise_pingwen_0.1.wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_speedup_0.2.wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_amp_0.2.wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_noisy_lsa_0.2.wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_noisy_maeclose_0.1.wav_dnnfa",
-                         "/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_noisy_maeopen_0.1.wav_dnnfa",
+
+my @hdir_src; if (@ARGV > 0) {
+    @hdir_src = ($ARGV[0]);
+} else {
+    @hdir_src = (
+                         "$config_data->{hdfs_out_root}/17kh_wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_addnoise_car_byd_0.2.wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_addnoise_car_dz_0.2.wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_addnoise_duodian_0.1.wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_addnoise_gs_0.2.wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_addnoise_jiaju_0.1.wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_addnoise_music_a_0.02.wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_addnoise_music_b_0.02.wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_addnoise_music_c_0.02.wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_addnoise_music_onenoise_0.02.wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_addnoise_music_tv_0.02.wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_addnoise_pingwen_0.1.wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_speedup_0.2.wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_amp_0.2.wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_noisy_lsa_0.2.wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_noisy_maeclose_0.1.wav_dnnfa",
+                         "$config_data->{hdfs_out_root}/17kh_wav_noisy_maeopen_0.1.wav_dnnfa",
                         );
-my $hdir_out          = ("/workdir/asrdictt/tasrdictt/taoyu/mlg/korean/17kh_wav_aug1.8.wav_fb40_dnnfa");
+}
+my $hdir_out          = ("$config_data->{hdfs_out_root}/17kh_wav_aug1.8.wav_fb40_dnnfa");
 my $hdir_src          = join(" -input ", @hdir_src);
 my $dir_tmp           = "tmp"; mkdir $dir_tmp if !-e $dir_tmp;
 foreach my $hdir_cur (@hdir_src)
@@ -43,7 +51,7 @@ foreach my $hdir_cur (@hdir_src)
 }
 
 ##tools
-my $dir_bin            = "/work1/asrdictt/taoyu/bin";
+my $dir_bin            = $config_data->{dir_bin};
 my $bin_stream         = "$dir_bin/streamingAC-2.5.0.jar";
 my $bin_selecttail     = "$dir_bin/selecttail";
 my $bin_renametail     = "$dir_bin/renametail";
