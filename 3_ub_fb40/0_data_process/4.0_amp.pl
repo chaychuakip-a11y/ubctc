@@ -1,9 +1,9 @@
 
 use strict;
 
-require "./utils.pl";
 my $config_data;
 BEGIN {
+    require "./utils.pl";
     $config_data = load_config();
 }
 

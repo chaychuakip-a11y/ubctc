@@ -17,7 +17,7 @@ foreach my $file (@files) {
     my $changed = 0;
 
     # 1. Wrap config loading in BEGIN block if not already
-    if ($content =~ s/require "\.\/utils\.pl";\s+my \$config_data = load_config\(\);/require ".\/utils.pl";\nmy \$config_data;\nBEGIN {\n    \$config_data = load_config();\n}/g) {
+    if ($content =~ s/require "\.\/utils\.pl";\s+my \$config_data = load_config\(\);/my \$config_data;\nBEGIN {\n    require ".\/utils.pl";\n    \$config_data = load_config();\n}/g) {
         $changed = 1;
     }
 
