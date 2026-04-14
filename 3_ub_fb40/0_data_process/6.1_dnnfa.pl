@@ -18,10 +18,10 @@ my @hdir_src; if (@ARGV > 0) {
     @hdir_src = ($ARGV[0]);
 } else {
     @hdir_src = (
-                         "$config_data->{hdfs_out_root}/17kh_wav_noisy_lsa_0.2.wav",
+                         "$config_data->{hdfs_out_root}/wav_noisy_lsa_0.2.wav",
                         );
 }
-my $hdir_out          = ("$config_data->{hdfs_out_root}/17kh_wav_noisy_lsa_0.2.wav_dnnfa");
+my $hdir_out          = ("$config_data->{hdfs_out_root}/wav_noisy_lsa_0.2.wav_dnnfa");
 my $hdir_src          = join(" -input ", @hdir_src);
 my $dir_tmp           = "tmp"; mkdir $dir_tmp if !-e $dir_tmp;
 foreach my $hdir_cur (@hdir_src)

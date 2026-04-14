@@ -25,7 +25,7 @@ my @hdir_src; if (@ARGV > 0) {
                          "$config_data->{hdfs_src_root}/korean_kaiyuan_zx_6.5kh/*part-000[0-1]?", ### 2/8, 1000H
                         );
 }
-my $hdir_out          = ("$config_data->{hdfs_out_root}/17kh_wav_dnnfa");
+my $hdir_out          = ("$config_data->{hdfs_out_root}/wav_dnnfa");
 my $hdir_src          = join(" -input ", @hdir_src);
 my $dir_tmp           = "tmp"; mkdir $dir_tmp if !-e $dir_tmp;
 

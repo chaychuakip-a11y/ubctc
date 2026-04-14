@@ -18,20 +18,20 @@ my @hdir_src; if (@ARGV > 0) {
     @hdir_src = ($ARGV[0]);
 } else {
     @hdir_src = (
-                        "$config_data->{hdfs_out_root}/17kh_wav_addnoise_car_byd_0.2.wav_dnnfa/*part-*[0-1]",
-                        "$config_data->{hdfs_out_root}/17kh_wav_addnoise_car_dz_0.2.wav_dnnfa/*part-*[0-1]",
-                        "$config_data->{hdfs_out_root}/17kh_wav_addnoise_duodian_0.1.wav_dnnfa/*part-*[0-1]",
-                        "$config_data->{hdfs_out_root}/17kh_wav_addnoise_gs_0.2.wav_dnnfa/*part-*[0-1]",
-                        "$config_data->{hdfs_out_root}/17kh_wav_addnoise_jiaju_0.1.wav_dnnfa/*part-*[0-1]",
-                        "$config_data->{hdfs_out_root}/17kh_wav_addnoise_music_a_0.02.wav_dnnfa/*part-*[0-1]",
-                        "$config_data->{hdfs_out_root}/17kh_wav_addnoise_music_b_0.02.wav_dnnfa/*part-*[0-1]",
-                        "$config_data->{hdfs_out_root}/17kh_wav_addnoise_music_c_0.02.wav_dnnfa/*part-*[0-1]",
-                        "$config_data->{hdfs_out_root}/17kh_wav_addnoise_music_onenoise_0.02.wav_dnnfa/*part-*[0-1]",
-                        "$config_data->{hdfs_out_root}/17kh_wav_addnoise_music_tv_0.02.wav_dnnfa/*part-*[0-1]",
-                        "$config_data->{hdfs_out_root}/17kh_wav_addnoise_pingwen_0.1.wav_dnnfa/*part-*[0-1]",
+                        "$config_data->{hdfs_out_root}/wav_addnoise_car_byd_0.2.wav_dnnfa/*part-*[0-1]",
+                        "$config_data->{hdfs_out_root}/wav_addnoise_car_dz_0.2.wav_dnnfa/*part-*[0-1]",
+                        "$config_data->{hdfs_out_root}/wav_addnoise_duodian_0.1.wav_dnnfa/*part-*[0-1]",
+                        "$config_data->{hdfs_out_root}/wav_addnoise_gs_0.2.wav_dnnfa/*part-*[0-1]",
+                        "$config_data->{hdfs_out_root}/wav_addnoise_jiaju_0.1.wav_dnnfa/*part-*[0-1]",
+                        "$config_data->{hdfs_out_root}/wav_addnoise_music_a_0.02.wav_dnnfa/*part-*[0-1]",
+                        "$config_data->{hdfs_out_root}/wav_addnoise_music_b_0.02.wav_dnnfa/*part-*[0-1]",
+                        "$config_data->{hdfs_out_root}/wav_addnoise_music_c_0.02.wav_dnnfa/*part-*[0-1]",
+                        "$config_data->{hdfs_out_root}/wav_addnoise_music_onenoise_0.02.wav_dnnfa/*part-*[0-1]",
+                        "$config_data->{hdfs_out_root}/wav_addnoise_music_tv_0.02.wav_dnnfa/*part-*[0-1]",
+                        "$config_data->{hdfs_out_root}/wav_addnoise_pingwen_0.1.wav_dnnfa/*part-*[0-1]",
                        );
 }
-my $hdir_out          = ("$config_data->{hdfs_out_root}/17kh_wav_noisy_lsa_0.2.wav");
+my $hdir_out          = ("$config_data->{hdfs_out_root}/wav_noisy_lsa_0.2.wav");
 my $hdir_src          = join(" -input ", @hdir_src);
 my $dir_tmp           = "tmp"; mkdir $dir_tmp if !-e $dir_tmp;
 foreach my $hdir_cur (@hdir_src)

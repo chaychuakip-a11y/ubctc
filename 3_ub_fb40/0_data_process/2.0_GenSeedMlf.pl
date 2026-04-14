@@ -4,7 +4,7 @@ require "./utils.pl";
 my $config_data = load_config();
 use List::Util 'shuffle';
 
-my $hdir     = "$config_data->{hdfs_out_root}/17kh_wav_dnnfa";
+my $hdir     = "$config_data->{hdfs_out_root}/wav_dnnfa";
 my $nSplit   = 10;
 my $nPart    = 100;
 my $dir_out  = "out";
