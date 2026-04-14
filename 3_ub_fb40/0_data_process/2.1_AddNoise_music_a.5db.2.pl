@@ -4,9 +4,11 @@ my $config_data;
 BEGIN {
     require "./utils.pl";
     $config_data = load_config();
+    if (defined $config_data->{dir_sbin}) {
+        require lib;
+        lib->import($config_data->{dir_sbin});
+    }
 }
-
-use lib $config_data->{dir_sbin};
 use share_hadoop;
 
 my $jobname0     = "AddNoise_music_a";
