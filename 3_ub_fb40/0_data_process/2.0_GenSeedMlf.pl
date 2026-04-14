@@ -1,7 +1,10 @@
 use strict;
 
 require "./utils.pl";
-my $config_data = load_config();
+my $config_data;
+BEGIN {
+    $config_data = load_config();
+}
 use List::Util 'shuffle';
 
 my $hdir     = "$config_data->{hdfs_out_root}/wav_dnnfa";
@@ -22,7 +25,7 @@ foreach my $hdir_cur (@hdir_src)
 		$hdir_cur =~ s#/[^/]+$##;
 	}
 	$hdir_cur .= '/_SUCCESS';
-	system("/work1/asrdictt/taoyu/sbin/wait_dir_hdfs.pl $hdir_cur");
+	system("$config_data->{dir_sbin}/wait_dir_hdfs.pl $hdir_cur");
 }
 
 my $partPerSplit = $nPart / $nSplit;
@@ -33,13 +36,13 @@ foreach my $split_id(0..$nSplit-1)
 {
 	my @part         = $nSplit == 1 ? ("?"x5) : map {sprintf("%05d", $_)} ($split_id*$partPerSplit..($split_id+1)*$partPerSplit-1);
 	my $hdir_cur     = join(" ", map {$_ = "$hdir/*part-$_"} @part);
-	my $cmd          = "hdfs dfs -cat $hdir_cur | /work1/asrdictt/taoyu/bin/fea_lab_lat_unpack_1 - $dir_out/split$split_id; touch $dir_out/split$split_id/done";
+	my $cmd          = "hdfs dfs -cat $hdir_cur | $config_data->{dir_bin}/fea_lab_lat_unpack_1 - $dir_out/split$split_id; touch $dir_out/split$split_id/done";
 	system("nohup sh -c \"$cmd\" >$dir_out/split$split_id.log 2>&1 &")
 }
 
 foreach my $split_id(0..$nSplit-1)
 {
-	system("/work1/asrdictt/taoyu/sbin/wait_file.pl $dir_out/split$split_id/done");
+	system("$config_data->{dir_sbin}/wait_file.pl $dir_out/split$split_id/done");
 }
 
 my $files = join(" ", map {$_ = "$dir_out/split$_/out.record.scp"} (0..$nSplit-1));

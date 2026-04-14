@@ -8,5 +8,6 @@
   "wts_file": "/work1/asrdictt/taoyu/mlg/korean/am/2_dnn_fb72/3_train/mlp-ring-h2048_2048_2048_2048_2048_2048_512-cw11-targ9004-step1_b4096_jumpframe3-2-5_discard0/mlp.99.wts.merge",
   "fea_norm": "/work1/asrdictt/taoyu/mlg/korean/am/2_dnn_fb72/1_down_pfile/lib_fb72/fea.norm",
   "state_count": "/work1/asrdictt/taoyu/mlg/korean/am/2_dnn_fb72/1_down_pfile/lib_fb72/states.count.low100.txt",
-  "atom_config": "/work1/asrdictt/taoyu/bin/atom-v20151016b/atom_hadoop_dnnfa.fb72.cfg"
+  "atom_config": "/work1/asrdictt/taoyu/bin/atom-v20151016b/atom_hadoop_dnnfa.fb72.cfg",
+  "dir_sbin": "/work1/asrdictt/taoyu/sbin"
 }

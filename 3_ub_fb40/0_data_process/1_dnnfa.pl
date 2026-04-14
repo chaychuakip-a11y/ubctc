@@ -1,9 +1,12 @@
 use strict;
 
 require "./utils.pl";
-my $config_data = load_config();
+my $config_data;
+BEGIN {
+    $config_data = load_config();
+}
 
-use lib "/work1/asrdictt/taoyu/sbin";
+use lib $config_data->{dir_sbin};
 use share_hadoop;
 
 my $jobname           = "dnnfa_base";#SET
@@ -30,17 +33,17 @@ my $hdir_src          = join(" -input ", @hdir_src);
 my $dir_tmp           = "tmp"; mkdir $dir_tmp if !-e $dir_tmp;
 
 ##input resource  fa
-my $config            = "/work1/asrdictt/taoyu/bin/atom-v20151016b/atom_hadoop_dnnfa.fb72.cfg";
-my $dir_ac            = "/work1/asrdictt/taoyu/mlg/korean/am/1_mle_mfc/final_s9k";
-my $dir_lm            = "/work1/asrdictt/taoyu/mlg/korean/res/res_fa/out_package_1gram";
+my $config            = $config_data->{atom_config};
+my $dir_ac            = $config_data->{dir_ac};
+my $dir_lm            = $config_data->{dir_lm};
 my $hmmlist           = "$dir_ac/hmmlist.final";
 my $acmod_bin         = "$dir_ac/atom_acmod.dnn.bin";
 my $fst_bin           = "$dir_lm/atom_fst.bin";
-# my $wfst_bin          = "$dir_lm/atom_wfst.bin";
+# my $wfst_bin          = "$dir_lm/atom_fst.bin";
 my $G_fst             = "$dir_lm/G.fst";
-my $wts_file          = "/work1/asrdictt/taoyu/mlg/korean/am/2_dnn_fb72/3_train/mlp-ring-h2048_2048_2048_2048_2048_2048_512-cw11-targ9004-step1_b4096_jumpframe3-2-5_discard0/mlp.99.wts.merge";
-my $fea_norm          = "/work1/asrdictt/taoyu/mlg/korean/am/2_dnn_fb72/1_down_pfile/lib_fb72/fea.norm";
-my $state_count       = "/work1/asrdictt/taoyu/mlg/korean/am/2_dnn_fb72/1_down_pfile/lib_fb72/states.count.low100.txt";
+my $wts_file          = $config_data->{wts_file};
+my $fea_norm          = $config_data->{fea_norm};
+my $state_count       = $config_data->{state_count};
 
 system("cp $config $dir_tmp/atom_fa.$jobname.cfg");
 ChangePara("$dir_tmp/atom_fa.$jobname.cfg","acmod_res",$acmod_bin);

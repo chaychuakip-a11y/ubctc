@@ -1,9 +1,12 @@
 use strict;
 
 require "./utils.pl";
-my $config_data = load_config();
+my $config_data;
+BEGIN {
+    $config_data = load_config();
+}
 
-use lib "/work1/asrdictt/taoyu/sbin";
+use lib $config_data->{dir_sbin};
 use share_hadoop;
 
 my $jobname0     = "AddNoise_car_byd";
@@ -31,13 +34,13 @@ foreach my $hdir_cur (@hdir_src)
 		$hdir_cur =~ s#/[^/]+$##;
 	}
 	$hdir_cur .= '/_SUCCESS';
-	system("/work1/asrdictt/taoyu/sbin/wait_dir_hdfs.pl $hdir_cur");
+	system("$config_data->{dir_sbin}/wait_dir_hdfs.pl $hdir_cur");
 }
 
 my $noisedata    = "$config_data->{hdfs_src_root}/../noisedata/chezai/noise_car_byd_rm3-4/iflytek-20231116-part-00000";#IN
 #my $scp_wav      = "labscp/lab.scp";  #IN
 my $mlf_seed     = "out/seed.mlf"; #IN
-system("/work1/asrdictt/taoyu/sbin/wait_file.pl $mlf_seed.done");
+system("$config_data->{dir_sbin}/wait_file.pl $mlf_seed.done");
 
 my @snr          = (5);#SET
 my @ratio        = (1);#SET
@@ -52,11 +55,11 @@ if(@ARGV >= 1)
 }
 
 my $bin_stream         = "$config_data->{dir_bin}/streamingAC-2.5.0.jar";
-my $bin_addnoise     = "/work1/asrdictt/taoyu/bin/AddNoise";
-my $bin_easytraining = "/work1/asrdictt/taoyu/bin/easytraining";
-my $bin_selectrecord = "/work1/asrdictt/taoyu/bin/selectrecord";
-my $bin_selecttail   = "/work1/asrdictt/taoyu/bin/selecttail";
-my $bin_addtail      = "/work1/asrdictt/taoyu/bin/addtail";
+my $bin_addnoise     = "$config_data->{dir_bin}/AddNoise";
+my $bin_easytraining = "$config_data->{dir_bin}/easytraining";
+my $bin_selectrecord = "$config_data->{dir_bin}/selectrecord";
+my $bin_selecttail   = "$config_data->{dir_bin}/selecttail";
+my $bin_addtail      = "$config_data->{dir_bin}/addtail";
 
 my @cmd_map;
 my @cmd_red;

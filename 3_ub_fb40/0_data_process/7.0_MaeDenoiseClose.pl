@@ -1,9 +1,12 @@
 use strict;
 
 require "./utils.pl";
-my $config_data = load_config();
+my $config_data;
+BEGIN {
+    $config_data = load_config();
+}
 
-use lib "/work1/asrdictt/taoyu/sbin";
+use lib $config_data->{dir_sbin};
 use share_hadoop;
 
 my $jobname           = "maeclose";#SET
@@ -42,7 +45,7 @@ foreach my $hdir_cur (@hdir_src)
 		$hdir_cur =~ s#/[^/]+$##;
 	}
 	$hdir_cur .= '/_SUCCESS';
-	system("/work1/asrdictt/taoyu/sbin/wait_dir_hdfs.pl $hdir_cur");
+	system("$config_data->{dir_sbin}/wait_dir_hdfs.pl $hdir_cur");
 }
 
 my $dir_bin            = $config_data->{dir_bin};
