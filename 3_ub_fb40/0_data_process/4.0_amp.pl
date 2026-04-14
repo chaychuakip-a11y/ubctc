@@ -6,8 +6,7 @@ BEGIN {
     require "./utils.pl";
     $config_data = load_config();
     if (defined $config_data->{dir_sbin}) {
-        require lib;
-        lib->import($config_data->{dir_sbin});
+        unshift @INC, $config_data->{dir_sbin};
     }
 }
 use share_hadoop;

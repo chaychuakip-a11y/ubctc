@@ -9,15 +9,23 @@ sub load_config {
     my %config;
     open(my $fh, "<", $config_file) or die "can't open $config_file: $!";
     while (my $line = <$fh>) {
-        # Match "key": "value" or "key": numeric_value
-        if ($line =~ /"([^"]+)"\s*:\s*"([^"]+)"/ || $line =~ /"([^"]+)"\s*:\s*([\d\.]+)/) {
+        # 移除换行符和首尾空格
+        $line =~ s/[\r\n]//g;
+        $line =~ s/^\s+|\s+$//g;
+        
+        # 匹配 "key" : "value"
+        if ($line =~ /"([^"]+)"\s*:\s*"([^"]+)"/) {
+            $config{$1} = $2;
+        }
+        # 匹配 "key" : 123
+        elsif ($line =~ /"([^"]+)"\s*:\s*([\d\.]+)/) {
             $config{$1} = $2;
         }
     }
     close($fh);
 
     if (!%config) {
-        die "Error: Failed to parse any configuration from $config_file. Please check the file format.\n";
+        die "Error: Failed to parse any configuration from $config_file. Please check file format.\n";
     }
 
     return \%config;
