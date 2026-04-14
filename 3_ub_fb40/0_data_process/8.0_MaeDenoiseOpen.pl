@@ -4,11 +4,18 @@ my $config_data;
 BEGIN {
     require "./utils.pl";
     $config_data = load_config();
-    if (defined $config_data->{dir_sbin}) {
+    if (defined $config_data->{dir_sbin} && $config_data->{dir_sbin} ne '') {
         unshift @INC, $config_data->{dir_sbin};
+    } else {
+        die "Error: dir_sbin not set in config.json (needed to locate share_hadoop.pm)\n";
+    }
+    eval { require share_hadoop; share_hadoop->import(); };
+    if ($@) {
+        die "Error: cannot load share_hadoop from dir_sbin=$config_data->{dir_sbin}\n"
+          . "  Check that share_hadoop.pm exists at that path.\n"
+          . "  Current \@INC: " . join(", ", @INC) . "\n";
     }
 }
-use share_hadoop;
 
 my $jobname           = "maeopen";#SET
 my $jobqueue          = $config_data->{jobqueue} || "nlp";#SET
