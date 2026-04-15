@@ -42,35 +42,61 @@ STATE_DICT=$DIR_AM/res/state_label.txt
 # 发音词典: 每行 "word<TAB>ph1 ph2 ..."
 LEXICON=$DIR_AM/res/lexicon.txt
 
-# 输入音频
-WAV=$1                  # 第一个命令行参数传入 wav 路径
+# ─────────────────────────────────────────────
+# 输入模式 (二选一)
+# ─────────────────────────────────────────────
+#   单条: bash decode.sh --wav /data/test/utt001.wav
+#   批量: bash decode.sh --wav_dir /data/test/wavs  [--mlf /data/test/ref.mlf]
 
-# 解码参数
 MODE=greedy             # greedy 或 beam
 BEAM=10                 # beam search 宽度 (仅 MODE=beam 时生效)
 BLANK=9003              # CTC blank id = num_class - 1
 SR=16000                # 采样率
 
+OUTPUT=$DIR_AM/decode/result.txt   # 解码结果输出文件 (逐行: utt_id<TAB>phones)
+
 # ─────────────────────────────────────────────
-# 2. 参数检查
+# 2. 解析命令行参数
 # ─────────────────────────────────────────────
 
-if [ -z "$WAV" ]; then
-    echo "Usage: bash decode.sh <wav_file>"
-    echo "  e.g. bash decode.sh /data/test/utt001.wav"
+WAV=""
+WAV_DIR=""
+MLF=""
+MLF_LEVEL="phone"       # phone 或 word
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --wav)     WAV="$2";      shift 2 ;;
+        --wav_dir) WAV_DIR="$2";  shift 2 ;;
+        --mlf)     MLF="$2";      shift 2 ;;
+        --mlf_level) MLF_LEVEL="$2"; shift 2 ;;
+        *) echo "[warn] 未知参数: $1"; shift ;;
+    esac
+done
+
+# 检查输入模式
+if [ -z "$WAV" ] && [ -z "$WAV_DIR" ]; then
+    echo "Usage:"
+    echo "  单条: bash decode.sh --wav /path/to/utt.wav"
+    echo "  批量: bash decode.sh --wav_dir /path/to/wavs/ [--mlf ref.mlf]"
     exit 1
 fi
 
-if [ ! -f "$WAV" ]; then
-    echo "[error] wav 文件不存在: $WAV"
-    exit 1
+if [ -n "$WAV" ] && [ ! -f "$WAV" ]; then
+    echo "[error] wav 文件不存在: $WAV"; exit 1
+fi
+
+if [ -n "$WAV_DIR" ] && [ ! -d "$WAV_DIR" ]; then
+    echo "[error] 目录不存在: $WAV_DIR"; exit 1
 fi
 
 if [ ! -f "$MODEL" ]; then
     echo "[error] 模型文件不存在: $MODEL"
-    echo "        请修改脚本中的 MODEL 路径"
-    exit 1
+    echo "        请修改脚本中的 MODEL 路径"; exit 1
 fi
+
+# 创建输出目录
+mkdir -p "$(dirname "$OUTPUT")"
 
 # ─────────────────────────────────────────────
 # 3. 组装解码命令
@@ -78,12 +104,19 @@ fi
 
 CMD="python $DIR_TRAIN/decode_wav.py"
 CMD="$CMD --model  $MODEL"
-CMD="$CMD --wav    $WAV"
 CMD="$CMD --mode   $MODE"
 CMD="$CMD --beam   $BEAM"
 CMD="$CMD --blank  $BLANK"
 CMD="$CMD --sr     $SR"
 CMD="$CMD --gpu    0"
+CMD="$CMD --output $OUTPUT"
+
+# 单条 / 批量
+if [ -n "$WAV" ]; then
+    CMD="$CMD --wav $WAV"
+else
+    CMD="$CMD --wav_dir $WAV_DIR"
+fi
 
 # 全局特征归一化 (内网文件, 可选)
 if [ -f "$FEA_NORM" ]; then
@@ -92,19 +125,27 @@ else
     echo "[warn] fea.norm 不存在, 跳过全局归一化: $FEA_NORM"
 fi
 
-# Triphone -> phone 转换 (需要 state_label 字典)
+# Triphone -> phone 转换
 if [ -f "$STATE_DICT" ]; then
-    CMD="$CMD --dict  $STATE_DICT"
-    CMD="$CMD --phone"
+    CMD="$CMD --dict $STATE_DICT --phone"
 else
     echo "[warn] state_label 字典不存在, 仅输出 state ID: $STATE_DICT"
 fi
 
-# Phone -> word 转换 (需要发音词典)
+# Phone -> word 转换
 if [ -f "$LEXICON" ]; then
     CMD="$CMD --lex $LEXICON"
 else
     echo "[warn] 发音词典不存在, 仅输出 phone 序列: $LEXICON"
+fi
+
+# MLF 参考对比
+if [ -n "$MLF" ]; then
+    if [ -f "$MLF" ]; then
+        CMD="$CMD --mlf $MLF --mlf_level $MLF_LEVEL"
+    else
+        echo "[warn] MLF 文件不存在, 跳过对比: $MLF"
+    fi
 fi
 
 # ─────────────────────────────────────────────

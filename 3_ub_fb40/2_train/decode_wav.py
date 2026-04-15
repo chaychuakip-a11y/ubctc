@@ -541,7 +541,149 @@ def phones_to_words(phones: list, lex: dict) -> list:
 
 
 # ─────────────────────────────────────────────────────────────
-# 10.  命令行入口
+# 10.  MLF 读取  (HTK Master Label File)
+# ─────────────────────────────────────────────────────────────
+
+def load_mlf(mlf_path: str, level: str = 'phone') -> dict:
+    """
+    解析 HTK MLF 文件, 返回 {utt_id -> label_list}.
+
+    支持两种常见格式:
+      带时间戳: "start end label [word]"  (单位 100ns)
+      无时间戳: "label"
+
+    Args:
+        mlf_path : MLF 文件路径
+        level    : 'phone' 直接返回 label 列
+                   'word'  返回第4列 word (若存在), 否则用 label 列
+
+    Returns:
+        {utt_id: [label, ...]}
+        utt_id 取自 MLF 中 "*/utt_id.lab" 的 utt_id 部分 (无后缀)
+    """
+    SILENCE = {'sil', 'sp', 'SIL', 'SP', 'silence', 'silb', 'sile'}
+    result = {}
+    cur_id = None
+    cur_labels = []
+
+    with open(mlf_path, 'r', encoding='utf-8') as fh:
+        for line in fh:
+            line = line.rstrip('\n').strip()
+            if not line or line == '#!MLF!#':
+                continue
+            if line.startswith('"'):
+                # 新语句头: "*/utt_id.lab" 或 "utt_id.lab"
+                if cur_id is not None:
+                    result[cur_id] = cur_labels
+                # 提取 utt_id: 去掉引号、路径前缀、.lab 后缀
+                name = line.strip('"').replace('\\', '/').split('/')[-1]
+                cur_id = os.path.splitext(name)[0]
+                cur_labels = []
+            elif line == '.':
+                # 语句结束
+                if cur_id is not None:
+                    result[cur_id] = cur_labels
+                cur_id = None
+                cur_labels = []
+            else:
+                parts = line.split()
+                # 判断格式: 带时间戳时 parts[0] 是纯数字
+                if len(parts) >= 3 and parts[0].lstrip('-').isdigit():
+                    # 格式: start end label [word ...]
+                    label = parts[2]
+                    word  = parts[3] if len(parts) >= 4 else label
+                elif len(parts) >= 1:
+                    # 格式: label
+                    label = parts[0]
+                    word  = label
+                else:
+                    continue
+
+                token = word if level == 'word' else label
+                if token not in SILENCE:
+                    cur_labels.append(token)
+
+    # 文件末尾没有 '.' 结束符时也保存
+    if cur_id is not None and cur_labels:
+        result[cur_id] = cur_labels
+
+    return result
+
+
+# ─────────────────────────────────────────────────────────────
+# 11.  编辑距离  &  错误率计算
+# ─────────────────────────────────────────────────────────────
+
+def edit_distance(ref: list, hyp: list) -> int:
+    """
+    计算两个序列之间的 Levenshtein 编辑距离.
+    (对应 asr/layers/acc.py 中的 edit_dist)
+    """
+    n, m = len(ref), len(hyp)
+    dp = list(range(m + 1))
+    for i in range(1, n + 1):
+        prev, dp[0] = dp[0], i
+        for j in range(1, m + 1):
+            temp = dp[j]
+            if ref[i - 1] == hyp[j - 1]:
+                dp[j] = prev
+            else:
+                dp[j] = 1 + min(prev, dp[j], dp[j - 1])
+            prev = temp
+    return dp[m]
+
+
+def error_stats(ref: list, hyp: list) -> dict:
+    """
+    返回单条语音的对齐统计量 (用于累加全局 PER/WER).
+
+    Returns:
+        {'dist': int, 'ref_len': int}
+    """
+    return {'dist': edit_distance(ref, hyp), 'ref_len': len(ref)}
+
+
+def format_error_rate(total_dist: int, total_ref: int) -> str:
+    if total_ref == 0:
+        return 'N/A (ref 为空)'
+    rate = total_dist / total_ref * 100
+    return f'{rate:.2f}%  ({total_dist}/{total_ref})'
+
+
+# ─────────────────────────────────────────────────────────────
+# 12.  单条语音推理  (供批量循环调用)
+# ─────────────────────────────────────────────────────────────
+
+def decode_one(wav_path: str, model: Ubctc, device: torch.device,
+               args, norm_params, id2lab, lex):
+    """
+    对单条 wav 文件完成特征提取 + CTC 解码 + 后处理.
+
+    Returns:
+        phones : List[str]  phone 序列 (需要 --phone)
+        words  : List[str]  word  序列 (需要 --lex),  否则为 None
+        hyp_ids: List[int]  原始 state ID 序列
+    """
+    fbank = extract_fb40(wav_path, sr=args.sr)
+    fbank = apply_utt_cmn(fbank)
+
+    if norm_params is not None:
+        mean, inv_std = norm_params
+        fbank = apply_global_norm(fbank, mean, inv_std)
+
+    hyp_ids, _ = decode(
+        model, fbank, device,
+        mode=args.mode, beam_size=args.beam, blank=args.blank,
+    )
+
+    phones = state_ids_to_phones(hyp_ids, id2lab) if (args.phone and id2lab) else []
+    words  = phones_to_words(phones, lex)          if (phones and lex)        else None
+
+    return phones, words, hyp_ids
+
+
+# ─────────────────────────────────────────────────────────────
+# 13.  命令行入口
 # ─────────────────────────────────────────────────────────────
 
 def main():
@@ -549,106 +691,180 @@ def main():
         description='WAV -> phone/word  via UBCTC (fb40 offCMN + CTC)',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    # 音频 & 模型
-    p.add_argument('--model', required=True,
-                   help='UBCTC checkpoint (.pt)')
-    p.add_argument('--wav',   required=True,
-                   help='输入音频 (.wav, 建议 16kHz)')
+    # ── 输入 ──
+    grp = p.add_mutually_exclusive_group(required=True)
+    grp.add_argument('--wav',     help='单条输入音频 (.wav)')
+    grp.add_argument('--wav_dir', help='批量输入: 文件夹路径, 递归搜索 *.wav')
+
+    # ── 模型 & 资源 ──
+    p.add_argument('--model', required=True, help='UBCTC checkpoint (.pt)')
     p.add_argument('--norm',  default=None,
-                   help='全局归一化文件 lib_fb40/fea.norm (内网文件, 可选). '
-                        '不提供时跳过全局归一化, 仅做 offCMN.')
-    # 解码
-    p.add_argument('--mode',  choices=['greedy', 'beam'], default='greedy',
-                   help='CTC 解码方式')
-    p.add_argument('--beam',  type=int, default=10,
-                   help='beam search 的 beam size')
-    p.add_argument('--blank', type=int, default=9003,
-                   help='CTC blank label ID (= num_class - 1)')
-    p.add_argument('--sr',    type=int, default=16000,
-                   help='目标采样率 (16000 或 8000)')
-    p.add_argument('--gpu',   type=int, default=-1,
-                   help='GPU 设备号 (-1 表示 CPU)')
-    # 后处理: triphone -> phone -> word
+                   help='全局归一化文件 lib_fb40/fea.norm (内网, 可选)')
     p.add_argument('--dict',  default=None,
-                   help='state-label 字典 ("triphone_label id" 每行). '
-                        '不提供时输出原始 state ID.')
-    p.add_argument('--phone', action='store_true',
-                   help='将 triphone state 转换为 center phone 序列 (需要 --dict).')
+                   help='state-label 字典 ("triphone_label id" 每行)')
     p.add_argument('--lex',   default=None,
-                   help='发音词典 ("word<TAB>ph1 ph2 ..." 每行). '
-                        '提供后将 phone 序列转换为 word 序列 (需要 --phone).')
+                   help='发音词典 ("word<TAB>ph1 ph2 ..." 每行)')
+
+    # ── 解码参数 ──
+    p.add_argument('--mode',  choices=['greedy', 'beam'], default='greedy')
+    p.add_argument('--beam',  type=int, default=10)
+    p.add_argument('--blank', type=int, default=9003)
+    p.add_argument('--sr',    type=int, default=16000)
+    p.add_argument('--gpu',   type=int, default=-1)
+
+    # ── 后处理 ──
+    p.add_argument('--phone', action='store_true',
+                   help='triphone state -> center phone (需要 --dict)')
+
+    # ── MLF 对比 ──
+    p.add_argument('--mlf',   default=None,
+                   help='参考标注 MLF 文件 (HTK 格式). '
+                        '提供后计算 PER (--phone) 或 WER (--lex).')
+    p.add_argument('--mlf_level', choices=['phone', 'word'], default='phone',
+                   help='MLF 中读取 phone 列还是 word 列进行对比 (默认 phone)')
+
+    # ── 输出 ──
+    p.add_argument('--output', default=None,
+                   help='将逐句解码结果保存到文件 (可选)')
+
     args = p.parse_args()
 
-    # 参数检查
+    # ── 参数联动检查 ──
     if args.lex and not args.phone:
-        print('[warn] --lex 需要配合 --phone 使用, 自动开启 --phone')
+        print('[warn] --lex 需要 --phone, 自动开启')
         args.phone = True
     if args.phone and not args.dict:
-        p.error('--phone 需要提供 --dict (state-label 字典)')
+        p.error('--phone 需要 --dict')
+    if args.mlf and not (args.phone or args.dict):
+        p.error('--mlf 对比需要至少提供 --dict (用于 phone 级对比)')
 
+    # ── 设备 ──
     device = torch.device(
         f'cuda:{args.gpu}' if args.gpu >= 0 and torch.cuda.is_available() else 'cpu'
     )
-    print(f'[decode] device  : {device}')
+    print(f'[decode] device   : {device}')
 
     # ── 模型 ──
-    print(f'[decode] model   : {args.model}')
+    print(f'[decode] model    : {args.model}')
     model = load_model(args.model, device)
-    n_par = sum(par.numel() for par in model.parameters())
-    print(f'[decode]           {n_par:,} parameters')
+    print(f'[decode]            {sum(v.numel() for v in model.parameters()):,} parameters')
 
-    # ── State-label 字典 ──
+    # ── 资源文件 ──
+    norm_params = None
+    if args.norm:
+        if os.path.isfile(args.norm):
+            norm_params = load_fea_norm(args.norm)
+            print(f'[decode] fea.norm : {args.norm}')
+        else:
+            print(f'[warn] fea.norm 不存在, 跳过: {args.norm}')
+
     id2lab = load_state_dict(args.dict) if args.dict else None
     if id2lab:
-        print(f'[decode] dict    : {len(id2lab)} states  ({args.dict})')
+        print(f'[decode] dict     : {len(id2lab)} states  ({args.dict})')
 
-    # ── 发音词典 ──
     lex = load_lexicon(args.lex) if args.lex else None
     if lex:
-        print(f'[decode] lexicon : {len(lex)} words  ({args.lex})')
+        print(f'[decode] lexicon  : {len(lex)} words  ({args.lex})')
 
-    # ── 音频 → fb40 ──
-    print(f'[decode] wav     : {args.wav}  (sr={args.sr})')
-    fbank = extract_fb40(args.wav, sr=args.sr)
-    print(f'[decode] fb40    : {fbank.shape}  (T={fbank.shape[0]}, dim=40)')
+    # ── 参考 MLF ──
+    ref_mlf = None
+    if args.mlf:
+        ref_mlf = load_mlf(args.mlf, level=args.mlf_level)
+        print(f'[decode] mlf      : {len(ref_mlf)} utts  ({args.mlf})')
 
-    # ── offCMN (整句均值归零) ──
-    fbank = apply_utt_cmn(fbank)
-    print(f'[decode] offCMN  : done')
-
-    # ── 全局归一化 (内网 fea.norm, 可选) ──
-    if args.norm:
-        mean, inv_std = load_fea_norm(args.norm)
-        fbank = apply_global_norm(fbank, mean, inv_std)
-        print(f'[decode] fea.norm: applied  ({args.norm})')
+    # ── 收集待解码的 wav 文件 ──
+    if args.wav:
+        wav_list = [args.wav]
     else:
-        print(f'[decode] fea.norm: 跳过 (内网文件, 未提供 --norm)')
+        wav_list = sorted(
+            os.path.join(root, f)
+            for root, _, files in os.walk(args.wav_dir)
+            for f in files if f.lower().endswith('.wav')
+        )
+        print(f'[decode] wav_dir  : {args.wav_dir}  ({len(wav_list)} files)')
 
-    # ── CTC 解码 ──
-    mode_str = args.mode + (f'  beam={args.beam}' if args.mode == 'beam' else '')
-    print(f'[decode] mode    : {mode_str}')
-    hyp_ids, log_probs = decode(
-        model, fbank, device,
-        mode=args.mode, beam_size=args.beam, blank=args.blank,
-    )
+    if not wav_list:
+        print('[error] 未找到任何 .wav 文件')
+        return
 
-    # ── 输出 ──
+    # ── 输出文件句柄 ──
+    out_fh = open(args.output, 'w', encoding='utf-8') if args.output else None
+
+    # ── 全局统计 ──
+    total_phone_dist, total_phone_ref = 0, 0
+    total_word_dist,  total_word_ref  = 0, 0
+    n_done, n_err = 0, 0
+
     print()
-    print(f'state IDs : {hyp_ids}')
+    print('=' * 72)
 
-    if id2lab:
-        triphones = [id2lab.get(i, f'<unk:{i}>') for i in hyp_ids]
-        print(f'triphones : {" ".join(triphones)}')
+    for wav_path in wav_list:
+        utt_id = os.path.splitext(os.path.basename(wav_path))[0]
+        try:
+            phones, words, hyp_ids = decode_one(
+                wav_path, model, device, args, norm_params, id2lab, lex
+            )
+        except Exception as e:
+            print(f'[error] {utt_id}: {e}')
+            n_err += 1
+            continue
 
-    if args.phone and id2lab:
-        phones = state_ids_to_phones(hyp_ids, id2lab)
-        print(f'phones    : {" ".join(phones)}')
+        n_done += 1
 
-        if lex:
-            words = phones_to_words(phones, lex)
-            print(f'words     : {" ".join(words)}')
+        # ── 逐句打印 ──
+        print(f'UTT  : {utt_id}')
+        if args.phone and phones:
+            print(f'HYP  : {" ".join(phones)}')
+        elif not args.phone:
+            print(f'HYP  : {hyp_ids}')
 
-    print(f'length    : {len(hyp_ids)} states  |  encoder frames: {log_probs.shape[0]}')
+        # ── MLF 对比 ──
+        if ref_mlf is not None:
+            ref_seq = ref_mlf.get(utt_id)
+            if ref_seq is None:
+                print(f'REF  : [未找到 MLF 条目: {utt_id}]')
+            else:
+                # Phone 级对比
+                if args.phone and phones:
+                    stats = error_stats(ref_seq, phones)
+                    total_phone_dist += stats['dist']
+                    total_phone_ref  += stats['ref_len']
+                    per = stats['dist'] / max(stats['ref_len'], 1) * 100
+                    print(f'REF  : {" ".join(ref_seq)}')
+                    print(f'PER  : {per:.1f}%  (err={stats["dist"]}, ref={stats["ref_len"]})')
+
+                # Word 级对比
+                if words is not None:
+                    # MLF word 列 (若 mlf_level=word 则 ref_seq 已是 word)
+                    word_ref = ref_mlf.get(utt_id + '_w', ref_seq) \
+                               if args.mlf_level == 'phone' else ref_seq
+                    stats_w = error_stats(word_ref, words)
+                    total_word_dist += stats_w['dist']
+                    total_word_ref  += stats_w['ref_len']
+                    wer = stats_w['dist'] / max(stats_w['ref_len'], 1) * 100
+                    print(f'WRD  : {" ".join(words)}')
+                    print(f'WER  : {wer:.1f}%  (err={stats_w["dist"]}, ref={stats_w["ref_len"]})')
+
+        # ── 写入输出文件 ──
+        if out_fh:
+            seq = phones if (args.phone and phones) else [str(i) for i in hyp_ids]
+            out_fh.write(f'{utt_id}\t{" ".join(seq)}\n')
+
+        print('-' * 72)
+
+    # ── 汇总 ──
+    print()
+    print('=' * 72)
+    print(f'[summary] 完成: {n_done}  失败: {n_err}  共: {len(wav_list)}')
+    if ref_mlf and args.phone and total_phone_ref > 0:
+        print(f'[summary] PER (phone) : {format_error_rate(total_phone_dist, total_phone_ref)}')
+    if ref_mlf and lex and total_word_ref > 0:
+        print(f'[summary] WER (word)  : {format_error_rate(total_word_dist, total_word_ref)}')
+    print('=' * 72)
+
+    if out_fh:
+        out_fh.close()
+        print(f'[decode] 结果已保存: {args.output}')
 
 
 if __name__ == '__main__':
