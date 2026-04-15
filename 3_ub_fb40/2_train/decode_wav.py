@@ -611,43 +611,123 @@ def load_mlf(mlf_path: str, level: str = 'phone') -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
-# 11.  编辑距离  &  错误率计算
+# 11.  编辑距离 + 对齐回溯  &  错误率计算
 # ─────────────────────────────────────────────────────────────
 
-def edit_distance(ref: list, hyp: list) -> int:
+def align_sequences(ref: list, hyp: list) -> list:
     """
-    计算两个序列之间的 Levenshtein 编辑距离.
-    (对应 asr/layers/acc.py 中的 edit_dist)
+    计算 Levenshtein 对齐, 回溯得到逐 token 操作序列.
+
+    Returns:
+        ops: list of (op, ref_tok, hyp_tok)
+             op in {'C'=correct, 'S'=substitution, 'I'=insertion, 'D'=deletion}
     """
     n, m = len(ref), len(hyp)
-    dp = list(range(m + 1))
+    # DP 表: dp[i][j] = edit_distance(ref[:i], hyp[:j])
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n + 1): dp[i][0] = i
+    for j in range(m + 1): dp[0][j] = j
     for i in range(1, n + 1):
-        prev, dp[0] = dp[0], i
         for j in range(1, m + 1):
-            temp = dp[j]
             if ref[i - 1] == hyp[j - 1]:
-                dp[j] = prev
+                dp[i][j] = dp[i - 1][j - 1]
             else:
-                dp[j] = 1 + min(prev, dp[j], dp[j - 1])
-            prev = temp
-    return dp[m]
+                dp[i][j] = 1 + min(dp[i - 1][j - 1],   # sub
+                                    dp[i][j - 1],        # ins
+                                    dp[i - 1][j])        # del
+
+    # 回溯
+    ops = []
+    i, j = n, m
+    while i > 0 or j > 0:
+        if i > 0 and j > 0 and ref[i-1] == hyp[j-1] and dp[i][j] == dp[i-1][j-1]:
+            ops.append(('C', ref[i-1], hyp[j-1]))
+            i -= 1; j -= 1
+        elif i > 0 and j > 0 and dp[i][j] == dp[i-1][j-1] + 1:
+            ops.append(('S', ref[i-1], hyp[j-1]))
+            i -= 1; j -= 1
+        elif j > 0 and dp[i][j] == dp[i][j-1] + 1:
+            ops.append(('I', '*', hyp[j-1]))
+            j -= 1
+        else:
+            ops.append(('D', ref[i-1], '*'))
+            i -= 1
+    ops.reverse()
+    return ops
+
+
+def format_alignment(ops: list, col_width: int = 0) -> str:
+    """
+    将对齐操作格式化为三行文本 (REF / HYP / OPS), 类似 SCLITE 输出.
+
+    示例:
+        REF: a    n    ny   e    o    ng
+        HYP: a    n    n    y    e    o    ng
+        OPS: C    C    S    I    C    C    C
+    """
+    GAP = '*'
+    ref_toks = [r if op != 'I' else GAP for op, r, h in ops]
+    hyp_toks = [h if op != 'D' else GAP for op, r, h in ops]
+    op_toks  = [op                       for op, r, h in ops]
+
+    w = col_width or max((len(t) for t in ref_toks + hyp_toks + op_toks), default=1)
+    w = max(w, 2)
+
+    fmt = lambda toks: '  '.join(t.center(w) for t in toks)
+    lines = [
+        'REF: ' + fmt(ref_toks),
+        'HYP: ' + fmt(hyp_toks),
+        'OPS: ' + fmt(op_toks),
+    ]
+    return '\n'.join(lines)
 
 
 def error_stats(ref: list, hyp: list) -> dict:
     """
-    返回单条语音的对齐统计量 (用于累加全局 PER/WER).
+    计算对齐统计量, 返回 S/I/D/C 分解及汇总.
 
     Returns:
-        {'dist': int, 'ref_len': int}
+        {
+          'ops'    : list of (op, ref_tok, hyp_tok),
+          'cor'    : int,   # correct
+          'sub'    : int,   # substitution
+          'ins'    : int,   # insertion
+          'del'    : int,   # deletion
+          'dist'   : int,   # = sub + ins + del
+          'ref_len': int,   # = cor + sub + del  (= len(ref))
+          'match'  : bool,  # ref == hyp (整句完全匹配)
+        }
     """
-    return {'dist': edit_distance(ref, hyp), 'ref_len': len(ref)}
+    ops  = align_sequences(ref, hyp)
+    cor  = sum(1 for op, *_ in ops if op == 'C')
+    sub  = sum(1 for op, *_ in ops if op == 'S')
+    ins  = sum(1 for op, *_ in ops if op == 'I')
+    del_ = sum(1 for op, *_ in ops if op == 'D')
+    return {
+        'ops'    : ops,
+        'cor'    : cor,
+        'sub'    : sub,
+        'ins'    : ins,
+        'del'    : del_,
+        'dist'   : sub + ins + del_,
+        'ref_len': len(ref),
+        'match'  : (ref == hyp),
+    }
 
 
-def format_error_rate(total_dist: int, total_ref: int) -> str:
+def format_error_rate(total_dist: int, total_ref: int,
+                      sub: int = 0, ins: int = 0, del_: int = 0) -> str:
     if total_ref == 0:
         return 'N/A (ref 为空)'
     rate = total_dist / total_ref * 100
-    return f'{rate:.2f}%  ({total_dist}/{total_ref})'
+    detail = f'Sub={sub} Ins={ins} Del={del_}' if (sub + ins + del_) > 0 else ''
+    return f'{rate:.2f}%  (err={total_dist}/ref={total_ref}  {detail})'
+
+
+def format_ser(n_wrong: int, n_total: int) -> str:
+    if n_total == 0:
+        return 'N/A'
+    return f'{n_wrong / n_total * 100:.2f}%  ({n_wrong}/{n_total})'
 
 
 # ─────────────────────────────────────────────────────────────
@@ -791,9 +871,14 @@ def main():
     out_fh = open(args.output, 'w', encoding='utf-8') if args.output else None
 
     # ── 全局统计 ──
-    total_phone_dist, total_phone_ref = 0, 0
-    total_word_dist,  total_word_ref  = 0, 0
-    n_done, n_err = 0, 0
+    total_phone_dist = total_phone_ref = 0
+    total_phone_sub  = total_phone_ins  = total_phone_del = 0
+    total_word_dist  = total_word_ref  = 0
+    total_word_sub   = total_word_ins   = total_word_del  = 0
+    n_phone_sent_err = 0   # 整句 phone 错误数 (SER)
+    n_word_sent_err  = 0   # 整句 word  错误数
+    n_sent_total     = 0   # 参与对比的语句总数
+    n_done, n_err    = 0, 0
 
     print()
     print('=' * 72)
@@ -810,56 +895,112 @@ def main():
             continue
 
         n_done += 1
-
-        # ── 逐句打印 ──
         print(f'UTT  : {utt_id}')
-        if args.phone and phones:
-            print(f'HYP  : {" ".join(phones)}')
-        elif not args.phone:
-            print(f'HYP  : {hyp_ids}')
 
-        # ── MLF 对比 ──
-        if ref_mlf is not None:
-            ref_seq = ref_mlf.get(utt_id)
-            if ref_seq is None:
-                print(f'REF  : [未找到 MLF 条目: {utt_id}]')
-            else:
-                # Phone 级对比
-                if args.phone and phones:
-                    stats = error_stats(ref_seq, phones)
-                    total_phone_dist += stats['dist']
-                    total_phone_ref  += stats['ref_len']
-                    per = stats['dist'] / max(stats['ref_len'], 1) * 100
-                    print(f'REF  : {" ".join(ref_seq)}')
-                    print(f'PER  : {per:.1f}%  (err={stats["dist"]}, ref={stats["ref_len"]})')
-
-                # Word 级对比
+        # ── 无 MLF：只打印解码结果 ──
+        if ref_mlf is None:
+            if args.phone and phones:
+                print(f'HYP  : {" ".join(phones)}')
                 if words is not None:
-                    # MLF word 列 (若 mlf_level=word 则 ref_seq 已是 word)
-                    word_ref = ref_mlf.get(utt_id + '_w', ref_seq) \
-                               if args.mlf_level == 'phone' else ref_seq
-                    stats_w = error_stats(word_ref, words)
-                    total_word_dist += stats_w['dist']
-                    total_word_ref  += stats_w['ref_len']
-                    wer = stats_w['dist'] / max(stats_w['ref_len'], 1) * 100
                     print(f'WRD  : {" ".join(words)}')
-                    print(f'WER  : {wer:.1f}%  (err={stats_w["dist"]}, ref={stats_w["ref_len"]})')
+            else:
+                print(f'HYP  : {hyp_ids}')
+            print('-' * 72)
+            if out_fh:
+                seq = phones if (args.phone and phones) else [str(i) for i in hyp_ids]
+                out_fh.write(f'{utt_id}\t{" ".join(seq)}\n')
+            continue
+
+        # ── 有 MLF：对比 ──
+        ref_seq = ref_mlf.get(utt_id)
+        if ref_seq is None:
+            print(f'[warn] MLF 中未找到: {utt_id}')
+            print('-' * 72)
+            continue
+
+        n_sent_total += 1
+
+        # ────────────────────────────────
+        # (A) Phone 级对比
+        # ────────────────────────────────
+        if args.phone and phones:
+            st = error_stats(ref_seq, phones)
+            total_phone_dist += st['dist']
+            total_phone_ref  += st['ref_len']
+            total_phone_sub  += st['sub']
+            total_phone_ins  += st['ins']
+            total_phone_del  += st['del']
+
+            # 整句是否正确
+            sent_ok = st['match']
+            if not sent_ok:
+                n_phone_sent_err += 1
+
+            per = st['dist'] / max(st['ref_len'], 1) * 100
+            sent_tag = 'CORRECT' if sent_ok else 'ERROR'
+
+            # 对齐展示
+            print(format_alignment(st['ops']))
+            print(f'PER  : {per:.1f}%  '
+                  f'(Sub={st["sub"]} Ins={st["ins"]} Del={st["del"]} '
+                  f'Cor={st["cor"]} Ref={st["ref_len"]})  '
+                  f'SENT={sent_tag}')
+
+        # ────────────────────────────────
+        # (B) Word 级对比 (需要 --lex)
+        # ────────────────────────────────
+        if words is not None:
+            # 若 mlf_level=word，ref_seq 已是 word 序列，直接用
+            # 若 mlf_level=phone，ref_seq 是 phone 序列，需转 word
+            if args.mlf_level == 'word':
+                word_ref = ref_seq
+            else:
+                word_ref = phones_to_words(ref_seq, lex) if lex else ref_seq
+
+            st_w = error_stats(word_ref, words)
+            total_word_dist += st_w['dist']
+            total_word_ref  += st_w['ref_len']
+            total_word_sub  += st_w['sub']
+            total_word_ins  += st_w['ins']
+            total_word_del  += st_w['del']
+
+            sent_ok_w = st_w['match']
+            if not sent_ok_w:
+                n_word_sent_err += 1
+
+            wer = st_w['dist'] / max(st_w['ref_len'], 1) * 100
+            sent_tag_w = 'CORRECT' if sent_ok_w else 'ERROR'
+
+            print(format_alignment(st_w['ops']))
+            print(f'WER  : {wer:.1f}%  '
+                  f'(Sub={st_w["sub"]} Ins={st_w["ins"]} Del={st_w["del"]} '
+                  f'Cor={st_w["cor"]} Ref={st_w["ref_len"]})  '
+                  f'SENT={sent_tag_w}')
+
+        print('-' * 72)
 
         # ── 写入输出文件 ──
         if out_fh:
             seq = phones if (args.phone and phones) else [str(i) for i in hyp_ids]
             out_fh.write(f'{utt_id}\t{" ".join(seq)}\n')
 
-        print('-' * 72)
-
     # ── 汇总 ──
     print()
     print('=' * 72)
-    print(f'[summary] 完成: {n_done}  失败: {n_err}  共: {len(wav_list)}')
-    if ref_mlf and args.phone and total_phone_ref > 0:
-        print(f'[summary] PER (phone) : {format_error_rate(total_phone_dist, total_phone_ref)}')
-    if ref_mlf and lex and total_word_ref > 0:
-        print(f'[summary] WER (word)  : {format_error_rate(total_word_dist, total_word_ref)}')
+    print(f'[summary] 完成={n_done}  失败={n_err}  共={len(wav_list)}')
+
+    if ref_mlf and n_sent_total > 0:
+        if args.phone and total_phone_ref > 0:
+            print(f'[summary] PER  : '
+                  f'{format_error_rate(total_phone_dist, total_phone_ref, total_phone_sub, total_phone_ins, total_phone_del)}')
+            print(f'[summary] SER(phone) : '
+                  f'{format_ser(n_phone_sent_err, n_sent_total)}')
+        if lex and total_word_ref > 0:
+            print(f'[summary] WER  : '
+                  f'{format_error_rate(total_word_dist, total_word_ref, total_word_sub, total_word_ins, total_word_del)}')
+            print(f'[summary] SER(word)  : '
+                  f'{format_ser(n_word_sent_err, n_sent_total)}')
+
     print('=' * 72)
 
     if out_fh:
