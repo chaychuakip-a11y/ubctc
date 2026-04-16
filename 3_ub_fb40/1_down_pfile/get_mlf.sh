@@ -47,11 +47,12 @@ fi
 echo "[get_mlf] 探测 HDFS 路径: $HDIR"
 
 # 列出所有数据文件：
-#   - awk '$1 !~ /^d/'  : 只取普通文件，排除目录（_DONE 等）
-#   - grep -v '/_'      : 排除 _SUCCESS / _logs 等 _ 前缀控制文件
+#   - awk '$1 ~ /^-/'   : 只取权限字段以 '-' 开头的普通文件
+#                         （排除目录 'd...'，也排除 "Found N items" 头行）
+#   - grep -v '/[_\.]'  : 排除 _SUCCESS / _logs / .tmp 等控制文件
 # 兼容任意文件名（part-NNN、*.pak.N、自定义名称均可）
 HDFS_FILES=$(hdfs dfs -ls "$HDIR" 2>/dev/null \
-    | awk '$1 !~ /^d/ {print $NF}' \
+    | awk '$1 ~ /^-/ {print $NF}' \
     | grep -v '/[_\.]' || true)
 
 N_FILES=$(echo "$HDFS_FILES" | grep -c '.' || true)
