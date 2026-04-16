@@ -46,19 +46,22 @@ fi
 
 echo "[get_mlf] 探测 HDFS 路径: $HDIR"
 
-# 列出所有 part 文件（过滤 _SUCCESS/_logs 等非数据文件）
+# 列出所有数据文件：
+#   - awk '$1 !~ /^d/'  : 只取普通文件，排除目录（_DONE 等）
+#   - grep -v '/_'      : 排除 _SUCCESS / _logs 等 _ 前缀控制文件
+# 兼容任意文件名（part-NNN、*.pak.N、自定义名称均可）
 HDFS_FILES=$(hdfs dfs -ls "$HDIR" 2>/dev/null \
-    | awk '{print $NF}' \
-    | grep -E '/part-[0-9]+$' || true)
+    | awk '$1 !~ /^d/ {print $NF}' \
+    | grep -v '/[_\.]' || true)
 
 N_FILES=$(echo "$HDFS_FILES" | grep -c '.' || true)
 
 if [ "$N_FILES" -eq 0 ]; then
-    echo "[error] HDFS 路径下没有找到 part 文件: $HDIR"
+    echo "[error] HDFS 路径下没有找到数据文件: $HDIR"
     exit 1
 fi
 
-echo "[get_mlf] 发现 $N_FILES 个 part 文件"
+echo "[get_mlf] 发现 $N_FILES 个数据文件"
 
 # 根据文件数量决定分片策略
 if [ "$N_FILES" -le 10 ]; then
