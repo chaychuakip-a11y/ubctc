@@ -137,6 +137,17 @@ download_part() {
         | "$BIN_UNPACK" - "./$i" "$label" \
         > "$log" 2>&1
 
+    # EUC-KR → UTF-8 转换（fea_lab_lat_unpack_1 输出 EUC-KR；静默跳过若 iconv 不可用）
+    if command -v iconv &>/dev/null && [ -s "$out" ]; then
+        local tmp="${out}.utf8"
+        if iconv -f EUC-KR -t UTF-8 "$out" > "$tmp" 2>/dev/null; then
+            mv "$tmp" "$out"
+        else
+            rm -f "$tmp"
+            echo "[warn] 分片 $i/$label: iconv EUC-KR→UTF-8 失败，保留原始编码"
+        fi
+    fi
+
     # 验证输出
     if validate_mlf "$out" "$label"; then
         local n_utt
