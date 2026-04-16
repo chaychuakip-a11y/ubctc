@@ -566,42 +566,45 @@ def load_mlf(mlf_path: str, level: str = 'phone') -> dict:
     cur_id = None
     cur_labels = []
 
-    with open(mlf_path, 'r', encoding='utf-8') as fh:
-        for line in fh:
-            line = line.rstrip('\n').strip()
-            if not line or line == '#!MLF!#':
-                continue
-            if line.startswith('"'):
-                # 新语句头: "*/utt_id.lab" 或 "utt_id.lab"
-                if cur_id is not None:
-                    result[cur_id] = cur_labels
-                # 提取 utt_id: 去掉引号、路径前缀、.lab 后缀
-                name = line.strip('"').replace('\\', '/').split('/')[-1]
-                cur_id = os.path.splitext(name)[0]
-                cur_labels = []
-            elif line == '.':
-                # 语句结束
-                if cur_id is not None:
-                    result[cur_id] = cur_labels
-                cur_id = None
-                cur_labels = []
-            else:
-                parts = line.split()
-                # 判断格式: 带时间戳时 parts[0] 是纯数字
-                if len(parts) >= 3 and parts[0].lstrip('-').isdigit():
-                    # 格式: start end label [word ...]
-                    label = parts[2]
-                    word  = parts[3] if len(parts) >= 4 else label
-                elif len(parts) >= 1:
-                    # 格式: label
-                    label = parts[0]
-                    word  = label
-                else:
-                    continue
+    # 以二进制模式读取再逐行 decode：
+    # surrogateescape 把不完整的 UTF-8 字节（如字节对标签 \xEB\xA3）映射为
+    # PEP-383 代理字符，保持 round-trip 语义，避免 UnicodeDecodeError；
+    # 相同编码方式读出的 token 字符串可以正常做等值比较。
+    with open(mlf_path, 'rb') as fh:
+        raw_lines = fh.read().split(b'\n')
 
-                token = word if level == 'word' else label
-                if token not in SILENCE:
-                    cur_labels.append(token)
+    for raw in raw_lines:
+        line = raw.decode('utf-8', errors='surrogateescape').rstrip('\r').strip()
+        if not line or line == '#!MLF!#':
+            continue
+        if line.startswith('"'):
+            # 新语句头: "*/utt_id.lab" 或 "utt_id.lab"
+            if cur_id is not None:
+                result[cur_id] = cur_labels
+            name = line.strip('"').replace('\\', '/').split('/')[-1]
+            cur_id = os.path.splitext(name)[0]
+            cur_labels = []
+        elif line == '.':
+            # 语句结束
+            if cur_id is not None:
+                result[cur_id] = cur_labels
+            cur_id = None
+            cur_labels = []
+        else:
+            parts = line.split()
+            # 判断格式: 带时间戳时 parts[0] 是纯数字
+            if len(parts) >= 3 and parts[0].lstrip('-').isdigit():
+                label = parts[2]
+                word  = parts[3] if len(parts) >= 4 else label
+            elif len(parts) >= 1:
+                label = parts[0]
+                word  = label
+            else:
+                continue
+
+            token = word if level == 'word' else label
+            if token not in SILENCE:
+                cur_labels.append(token)
 
     # 文件末尾没有 '.' 结束符时也保存
     if cur_id is not None and cur_labels:
