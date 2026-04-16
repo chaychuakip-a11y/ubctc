@@ -1,0 +1,128 @@
+[Model]
+# the file and and class name should be included
+ModelName = net_ubctc.Ubctc
+
+[TrainSetting]
+# ASR|LM
+TrainType = ASR
+initEncoderModel = /yrfs4/asrdictt/tyliu23/am_data_process/kr/2_train/train_ctc_init_ce/model.iter13.part4
+# custom trainer, will use default if not specified
+#Trainer = net_ce.Trainer
+OutDir = cz_xd_1_1_0318_freeze
+Iter = 50
+# which iteration to half learning rate
+Half = 9
+InitLearningRate = 0.0001
+LearningRate = 0.0001
+# how many iters to print information
+Display = 100
+# SGD, ADAM
+Optimizer = SGD
+LookAhead = True
+LookAhead_K = 6
+LookAhead_Alpha = 0.5
+
+# how many iters to perform a validation, set 0 to validate after training
+# thying modify
+CVInterval = 0
+NGpu = 4
+RandomSeed = 0
+
+# grad norm
+ClipGradient = 2
+ClipGradient2 = 20
+Discount = 0.5
+#### BMUF_ALPHA: 4gpu: 0.75, others: 1.0; BMUF_BLR: 1.0;
+BMUF_ALPHA = 0.75
+BMUF_BLR = 1.0
+# 1-1/gpunum if net set BMUF_BM, BMUF_BM: 4gpu:0.75, 8gpu:0.9, 12gpu:0.92, 16gpu:0.94, 32gpu:0.972
+BMUF_BM = 1.0
+BMUF_SYNC = 20
+# using torchscript, this will accelerate training but may use more gpu memory
+JIT = False
+
+[TrainDataSetting]
+Bunchsize    = 16384
+PadNum       = 4
+MaxNumSent   = 1000
+MaxSentFrame = 8192
+ShuffleBatch = True
+ShuffleSeq   = True
+NormFile     = /yrfs4/asrdictt/tyliu23/am_data_process/kr/1_down_pfile/lib_fb40/fea.norm
+
+# by ssyan2 train data setting split by ",", like: TrainDatas = DataSetting,DataSettingAdd1,DataSettingAdd2 and  TrainDatas[0] most be DataSetting
+TrainDatas = DataSetting
+
+# set DataSettingAdd rate base DataSetting (DataSettingAdd:DataSetting=MixRate:1),If -1 use all,Rates[0] most be 1
+Rates = 1.0
+#0.5,2.0,0.5,0.3,0.3,0.1,1.5,0.2,0.2,  0.2,0.05,0.05, 1.0,0.1
+#0.5,0.5,1.0
+#,-1, 0.275
+
+# when lmdb ###, none,all for reverb,noise,amp
+#Augs = all:0.5,reverb:0.6 & amp:0.3
+#Augs = None, None
+ReverbFile = /work1/asrdictt/ssyan2/work_dir/multi_input_prjs/0_data_process/reverb_npy/reverb_pak_real_135m.npy
+ReverbNoisePaths = /train8/asrkw/kaishen2/Data_kws/Universal_MC_interNoise/lmdb/lmdb0, /yrfs4/asrdictt/ssyan2/jingpinfangyan/sichuan/noise/dev.list.reverb_music_noise/lmdb_datas/lmdb0
+#NoisePaths = /train8/asrkw/kaishen2/Data_kws/Universal_MC_interNoise/lmdb/lmdb0, /train8/asrkw/kaishen2/Data_kws/Universal_MC_diffuseNoise/lmdb/lmdb0
+NoisePaths = /yrfs4/asrdictt/ssyan2/jingpinfangyan/sichuan/noise/dev.list.reverb_music_noise/lmdb_datas/lmdb0, /yrfs4/asrdictt/ssyan2/jingpinfangyan/sichuan/noise/dev.list.reverb_tv_noise/lmdb_datas/lmdb0, /yrfs4/asrdictt/ssyan2/jingpinfangyan/sichuan/noise/dev.list.home_m...
+
+# all:0.5, noise:0.6 & amp:0.3
+BatchCtrl = False
+
+# main dataset most be named DataSetting
+[DataSetting]
+
+# how many sentences are used to initialize model
+InitSent = 120000
+# how many sentences are used to validate, if validation pfile is not specific, will use last part of training pfile
+CVSentNum = 1000
+
+#pfile|lmdb
+DataType = pfile
+
+Npart = 4
+# when lmdb
+LmdbDir = /yrfs4/asr/ssyan2/jingpinfangyan/sichuan/lib_supervised/new6RF_800/lmdb_datas
+LmdbPrefix = lmdb$
+Aug = noise : 0.1 & reverb : 0.2
+# Aug = all:0.1
+# when lmdb
+# Aug = None
+
+# when pfile
+DataDir     = /yrfs4/asrdictt/tyliu23/am_data_process/kr/1_down_pfile/lib_fb40
+DataDirLab  = /yrfs4/asrdictt/tyliu23/am_data_process/kr/1_down_pfile/lib_fb40
+FeaturePrefix = fea.pfile.$
+LabelPrefix   = lab.pfile.$
+
+[PartDistribution]
+Iteration7 = 0,1,2,3,4
+Iteration8 = 5,6,7,8,9
+Iteration9 = 0,1,2,3,4
+Iteration10 = 5,6,7,8,9
+Iteration11 = 0,1,2,3,4
+Iteration12 = 5,6,7,8,9
+Iteration13 = 0,1,2,3,4
+Iteration14 = 5,6,7,8,9
+
+[DataChatGPT]
+
+# how many sentences are used to initialize model
+#InitSent = 0
+# how many sentences are used to validate, if validation pfile is not specific, will use last part of training pfile
+CVSentNum = 0
+#pfile|lmdb
+DataType = pfile
+Npart = 1
+DataDir = /yrfs4/asrdictt/hyzhang38/chatgpt_trainset/ed
+DataDirLab = /yrfs4/asrdictt/hyzhang38/chatgpt_trainset/ce_ed_jing
+FeaturePrefix = fea.pfile.$
+LabelPrefix = lab.pfile.$
+
+[PartDistribution_DataChatGPT]
+# Iteration0 =
+# Iteration1 =
+# Iteration2 =
+# Iteration3 =
+# Iteration4 =
