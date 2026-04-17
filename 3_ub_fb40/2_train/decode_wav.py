@@ -6,7 +6,7 @@ Feature pipeline (对齐 9_fea_merge.pl / HTK config.fea.16K_offCMN_PowerFB40):
 
     WAV (16kHz)
       │
-      │  raw_fea:  25ms Hamming 窗, 10ms 帧移
+      │  raw_fea:  25ms Hamming 窗, 20ms 帧移  (RECORD_STEPSIZE_DEF=320)
       │            功率谱 → 40维 mel 滤波器组 → log
       ▼
     fb40  (T, 40)   ← 静态特征, 无 Δ/ΔΔ
@@ -72,6 +72,7 @@ if _DIR not in sys.path:
 
 from net_ubctc import Ubctc
 from asr.data import clip_mask
+from asr.data.pfile_reader import Pfileinfo, Normfile
 
 
 # ─────────────────────────────────────────────────────────────
@@ -84,7 +85,7 @@ def extract_fb40(wav_path: str, sr: int = 16000) -> np.ndarray:
 
         - 采样率: 16kHz (16K)
         - 窗函数: Hamming, 25ms (400 samples @ 16kHz)
-        - 帧移:   10ms  (160 samples @ 16kHz)
+        - 帧移:   20ms  (320 samples @ 16kHz, RECORD_STEPSIZE_DEF=320)
         - 特征:   功率谱 → 40维 mel 滤波器组 → log  (PowerFB40)
         - 无 Δ/ΔΔ
 
@@ -94,10 +95,38 @@ def extract_fb40(wav_path: str, sr: int = 16000) -> np.ndarray:
         fbank: (T, 40) float32 numpy array
     """
     WIN_SAMPLES = int(sr * 0.025)   # 25ms
-    HOP_SAMPLES = int(sr * 0.010)   # 10ms
+    HOP_SAMPLES = int(sr * 0.020)   # 20ms  (RECORD_STEPSIZE_DEF=320)
     N_MELS = 40
 
     # ── 读取音频 ──
+    # raw PCM (headerless, 16-bit signed little-endian, assumed sr)
+    if wav_path.lower().endswith('.pcm'):
+        pcm = np.frombuffer(open(wav_path, 'rb').read(), dtype=np.int16)
+        wav = torch.from_numpy(pcm.astype(np.float32) / 32768.0)  # mono (N,)
+        orig_sr = sr
+
+        mel_tf = None  # 下方统一处理
+        try:
+            import torchaudio
+            mel_tf = torchaudio.transforms.MelSpectrogram(
+                sample_rate=sr, n_fft=WIN_SAMPLES, win_length=WIN_SAMPLES,
+                hop_length=HOP_SAMPLES, n_mels=N_MELS,
+                window_fn=torch.hamming_window, power=2.0,
+                norm=None, mel_scale='htk',
+            )
+            mel = mel_tf(wav)
+            fbank = torch.log(mel + 1e-7).T.numpy().astype(np.float32)
+        except ImportError:
+            import librosa
+            wav_np = wav.numpy()
+            mel = librosa.feature.melspectrogram(
+                y=wav_np, sr=sr, n_fft=WIN_SAMPLES, win_length=WIN_SAMPLES,
+                hop_length=HOP_SAMPLES, n_mels=N_MELS,
+                window='hamming', power=2.0, htk=True,
+            )
+            fbank = np.log(mel + 1e-7).T.astype(np.float32)
+        return fbank
+
     try:
         import torchaudio
         wav, orig_sr = torchaudio.load(wav_path)           # (C, N)
@@ -136,7 +165,7 @@ def extract_fb40(wav_path: str, sr: int = 16000) -> np.ndarray:
             n_mels=N_MELS,
             window='hamming',   # ← Hamming
             power=2.0,          # ← 功率谱
-            htk=True,           # ← HTK mel 刻度
+            htk=True,           # ← HTK mel 刻度，对齐 RECORD_STEPSIZE_DEF=320
         )
         fbank = np.log(mel + 1e-7).T.astype(np.float32)    # (T, 40)
 
@@ -241,6 +270,25 @@ def feat_to_tensor(feat: np.ndarray, device: torch.device):
     rnn_mask[:T_orig] = 1.0
 
     return x.to(device), rnn_mask.to(device), T_orig
+
+
+# ─────────────────────────────────────────────────────────────
+# 3b. pfile 单句读取
+# ─────────────────────────────────────────────────────────────
+
+def read_one_sent(pfileinfo: Pfileinfo, fp, sent_idx: int) -> np.ndarray:
+    """
+    从已打开的二进制文件句柄读取第 sent_idx 条句子.
+    返回 (T, D) float32 (特征) 或 int32 (标签) numpy array.
+    """
+    seqid, start_frame, num_frames = pfileinfo.seq_info[sent_idx]
+    dtype = np.dtype('float32') if pfileinfo.data_format[2] == 'f' else np.dtype('int32')
+    frame_len = pfileinfo.frame_length
+    fp.seek(pfileinfo.header_size + frame_len * dtype.itemsize * start_frame)
+    raw = fp.read(frame_len * dtype.itemsize * num_frames)
+    arr = np.frombuffer(raw, dtype=dtype).copy().byteswap()
+    arr = arr.reshape(num_frames, frame_len)[:, pfileinfo.real_data_start:]
+    return arr.astype(np.float32)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -350,13 +398,9 @@ def decode(model: Ubctc, feat: np.ndarray, device: torch.device,
         "att_label": torch.zeros(1, 1, dtype=torch.long, device=device),
     }
 
-    enc = model.encoder
-    meta["rnn_mask"] = clip_mask(meta["rnn_mask"], enc.concat_fr.nmod, 0)
-
-    enc_out = enc(x, meta)                              # (1, 256, 1, T')
-    b, d, f, t = enc_out.shape
-    flat   = enc_out.permute(2, 1, 3, 0).reshape(1, d, 1, t * b)
-    logit  = model.classification(flat).squeeze().permute(1, 0)   # (T', 9004)
+    _, logit = model(x, meta)                            # (T', 9004)
+    if logit.dim() == 3: logit = logit.squeeze(0)
+    if logit.shape[0] == 9004: logit = logit.transpose(0, 1)
     log_probs = F.log_softmax(logit, dim=-1)
 
     hyp = ctc_greedy(log_probs, blank) if mode == 'greedy' \
@@ -771,13 +815,20 @@ def decode_one(wav_path: str, model: Ubctc, device: torch.device,
 
 def main():
     p = argparse.ArgumentParser(
-        description='WAV -> phone/word  via UBCTC (fb40 offCMN + CTC)',
+        description='WAV / pfile -> phone/word  via UBCTC (fb40 offCMN + CTC)',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     # ── 输入 ──
     grp = p.add_mutually_exclusive_group(required=True)
-    grp.add_argument('--wav',     help='单条输入音频 (.wav)')
+    grp.add_argument('--wav',     help='单条输入音频 (.wav / .pcm)')
     grp.add_argument('--wav_dir', help='批量输入: 文件夹路径, 递归搜索 *.wav')
+    grp.add_argument('--fea',     help='pfile 特征文件 (fea.pfile.X), 跳过 WAV 特征提取')
+
+    # ── pfile 附加参数 ──
+    p.add_argument('--lab',   default=None,
+                   help='pfile 标签文件 (lab.pfile.X), 配合 --fea 使用, 计算准确率')
+    p.add_argument('--nsent', type=int, default=0,
+                   help='pfile 模式: 只解前 N 句, 0=全部')
 
     # ── 模型 & 资源 ──
     p.add_argument('--model', required=True, help='UBCTC checkpoint (.pt)')
@@ -855,20 +906,37 @@ def main():
         ref_mlf = load_mlf(args.mlf, level=args.mlf_level)
         print(f'[decode] mlf      : {len(ref_mlf)} utts  ({args.mlf})')
 
-    # ── 收集待解码的 wav 文件 ──
-    if args.wav:
-        wav_list = [args.wav]
-    else:
-        wav_list = sorted(
-            os.path.join(root, f)
-            for root, _, files in os.walk(args.wav_dir)
-            for f in files if f.lower().endswith('.wav')
-        )
-        print(f'[decode] wav_dir  : {args.wav_dir}  ({len(wav_list)} files)')
+    # ── 收集待解码的输入 ──
+    use_pfile = bool(args.fea)
 
-    if not wav_list:
-        print('[error] 未找到任何 .wav 文件')
-        return
+    if use_pfile:
+        fea_info = Pfileinfo(args.fea)
+        fea_fp   = open(args.fea, 'rb')
+        lab_info = Pfileinfo(args.lab) if args.lab else None
+        lab_fp   = open(args.lab, 'rb') if args.lab else None
+        nsent    = args.nsent if args.nsent > 0 else fea_info.num_sentences
+        nsent    = min(nsent, fea_info.num_sentences)
+        # pfile 模式用 Normfile 读 norm (必须提供)
+        pfile_norm = None
+        if norm_params is None and args.norm:
+            pass   # 已在上方打过警告
+        if args.norm and os.path.isfile(args.norm):
+            pfile_norm = Normfile(args.norm)
+        print(f'[decode] fea      : {args.fea}  ({fea_info.num_sentences} sents, dim={fea_info.dim_features})')
+        print(f'[decode] 解码前 {nsent} 句')
+    else:
+        if args.wav:
+            wav_list = [args.wav]
+        else:
+            wav_list = sorted(
+                os.path.join(root, f)
+                for root, _, files in os.walk(args.wav_dir)
+                for f in files if f.lower().endswith(('.wav', '.pcm'))
+            )
+            print(f'[decode] wav_dir  : {args.wav_dir}  ({len(wav_list)} files)')
+        if not wav_list:
+            print('[error] 未找到任何 .wav / .pcm 文件')
+            return
 
     # ── 输出文件句柄 ──
     out_fh = open(args.output, 'w', encoding='utf-8') if args.output else None
@@ -878,27 +946,83 @@ def main():
     total_phone_sub  = total_phone_ins  = total_phone_del = 0
     total_word_dist  = total_word_ref  = 0
     total_word_sub   = total_word_ins   = total_word_del  = 0
-    n_phone_sent_err = 0   # 整句 phone 错误数 (SER)
-    n_word_sent_err  = 0   # 整句 word  错误数
-    n_sent_total     = 0   # 参与对比的语句总数
+    n_phone_sent_err = 0
+    n_word_sent_err  = 0
+    n_sent_total     = 0
     n_done, n_err    = 0, 0
 
     print()
     print('=' * 72)
 
-    for wav_path in wav_list:
-        utt_id = os.path.splitext(os.path.basename(wav_path))[0]
-        try:
-            phones, words, hyp_ids = decode_one(
-                wav_path, model, device, args, norm_params, id2lab, lex
-            )
-        except Exception as e:
-            print(f'[error] {utt_id}: {e}')
-            n_err += 1
-            continue
+    # ── 构建迭代序列 ──
+    if use_pfile:
+        iter_items = range(nsent)
+    else:
+        iter_items = wav_list
+
+    for item in iter_items:
+
+        # ── 特征提取 / pfile 读取 ──
+        if use_pfile:
+            i = item
+            utt_id = f'sent_{i:06d}'
+            try:
+                feat = read_one_sent(fea_info, fea_fp, i)
+                if pfile_norm is not None:
+                    feat = (feat - pfile_norm.mean) * pfile_norm.var
+                hyp_ids, _ = decode(model, feat, device,
+                                    mode=args.mode, beam_size=args.beam, blank=args.blank)
+            except Exception as e:
+                print(f'[error] {utt_id}: {e}')
+                n_err += 1
+                continue
+
+            # pfile 标签: state ID 序列
+            pfile_ref_ids = None
+            if lab_info is not None:
+                lab_arr = read_one_sent(lab_info, lab_fp, i)
+                pfile_ref_ids = [int(r) for r in lab_arr[:, 0] if r >= 0]
+
+        else:
+            wav_path = item
+            utt_id = os.path.splitext(os.path.basename(wav_path))[0]
+            try:
+                phones, words, hyp_ids = decode_one(
+                    wav_path, model, device, args, norm_params, id2lab, lex
+                )
+            except Exception as e:
+                print(f'[error] {utt_id}: {e}')
+                n_err += 1
+                continue
+
+        # pfile 模式补充 phones/words
+        if use_pfile:
+            phones = state_ids_to_phones(hyp_ids, id2lab) if (args.phone and id2lab) else []
+            words  = phones_to_words(phones, lex) if (phones and lex) else None
 
         n_done += 1
         print(f'UTT  : {utt_id}')
+
+        # ── pfile 标签对比 (无 MLF 时) ──
+        if use_pfile and pfile_ref_ids is not None and ref_mlf is None:
+            ref_phones = state_ids_to_phones(pfile_ref_ids, id2lab) if id2lab else []
+            if ref_phones and phones:
+                st = error_stats(ref_phones, phones)
+                per = st['dist'] / max(st['ref_len'], 1) * 100
+                total_phone_dist += st['dist']
+                total_phone_ref  += st['ref_len']
+                n_sent_total += 1
+                if not st['match']: n_phone_sent_err += 1
+                print(format_alignment(st['ops']))
+                print(f'PER  : {per:.1f}%  (Cor={st["cor"]} Sub={st["sub"]} Ins={st["ins"]} Del={st["del"]})')
+            else:
+                print(f'HYP  : {hyp_ids[:30]}')
+                print(f'REF  : {pfile_ref_ids[:30]}')
+            print('-' * 72)
+            if out_fh:
+                seq = phones if phones else [str(x) for x in hyp_ids]
+                out_fh.write(f'{utt_id}\t{" ".join(seq)}\n')
+            continue
 
         # ── 无 MLF：只打印解码结果 ──
         if ref_mlf is None:
@@ -923,9 +1047,7 @@ def main():
 
         n_sent_total += 1
 
-        # ────────────────────────────────
-        # (A) Phone 级对比
-        # ────────────────────────────────
+        # (A) Phone 级
         if args.phone and phones:
             st = error_stats(ref_seq, phones)
             total_phone_dist += st['dist']
@@ -933,76 +1055,60 @@ def main():
             total_phone_sub  += st['sub']
             total_phone_ins  += st['ins']
             total_phone_del  += st['del']
-
-            # 整句是否正确
             sent_ok = st['match']
-            if not sent_ok:
-                n_phone_sent_err += 1
-
+            if not sent_ok: n_phone_sent_err += 1
             per = st['dist'] / max(st['ref_len'], 1) * 100
-            sent_tag = 'CORRECT' if sent_ok else 'ERROR'
-
-            # 对齐展示
             print(format_alignment(st['ops']))
             print(f'PER  : {per:.1f}%  '
                   f'(Sub={st["sub"]} Ins={st["ins"]} Del={st["del"]} '
                   f'Cor={st["cor"]} Ref={st["ref_len"]})  '
-                  f'SENT={sent_tag}')
+                  f'SENT={"CORRECT" if sent_ok else "ERROR"}')
 
-        # ────────────────────────────────
-        # (B) Word 级对比 (需要 --lex)
-        # ────────────────────────────────
+        # (B) Word 级
         if words is not None:
-            # 若 mlf_level=word，ref_seq 已是 word 序列，直接用
-            # 若 mlf_level=phone，ref_seq 是 phone 序列，需转 word
-            if args.mlf_level == 'word':
-                word_ref = ref_seq
-            else:
-                word_ref = phones_to_words(ref_seq, lex) if lex else ref_seq
-
+            word_ref = ref_seq if args.mlf_level == 'word' \
+                       else (phones_to_words(ref_seq, lex) if lex else ref_seq)
             st_w = error_stats(word_ref, words)
             total_word_dist += st_w['dist']
             total_word_ref  += st_w['ref_len']
             total_word_sub  += st_w['sub']
             total_word_ins  += st_w['ins']
             total_word_del  += st_w['del']
-
             sent_ok_w = st_w['match']
-            if not sent_ok_w:
-                n_word_sent_err += 1
-
+            if not sent_ok_w: n_word_sent_err += 1
             wer = st_w['dist'] / max(st_w['ref_len'], 1) * 100
-            sent_tag_w = 'CORRECT' if sent_ok_w else 'ERROR'
-
             print(format_alignment(st_w['ops']))
             print(f'WER  : {wer:.1f}%  '
                   f'(Sub={st_w["sub"]} Ins={st_w["ins"]} Del={st_w["del"]} '
                   f'Cor={st_w["cor"]} Ref={st_w["ref_len"]})  '
-                  f'SENT={sent_tag_w}')
+                  f'SENT={"CORRECT" if sent_ok_w else "ERROR"}')
 
         print('-' * 72)
-
-        # ── 写入输出文件 ──
         if out_fh:
-            seq = phones if (args.phone and phones) else [str(i) for i in hyp_ids]
+            seq = phones if (args.phone and phones) else [str(x) for x in hyp_ids]
             out_fh.write(f'{utt_id}\t{" ".join(seq)}\n')
 
+    # ── 关闭 pfile 句柄 ──
+    if use_pfile:
+        fea_fp.close()
+        if lab_fp: lab_fp.close()
+
     # ── 汇总 ──
+    total = nsent if use_pfile else len(wav_list)
     print()
     print('=' * 72)
-    print(f'[summary] 完成={n_done}  失败={n_err}  共={len(wav_list)}')
+    print(f'[summary] 完成={n_done}  失败={n_err}  共={total}')
 
-    if ref_mlf and n_sent_total > 0:
-        if args.phone and total_phone_ref > 0:
-            print(f'[summary] PER  : '
-                  f'{format_error_rate(total_phone_dist, total_phone_ref, total_phone_sub, total_phone_ins, total_phone_del)}')
-            print(f'[summary] SER(phone) : '
-                  f'{format_ser(n_phone_sent_err, n_sent_total)}')
-        if lex and total_word_ref > 0:
-            print(f'[summary] WER  : '
-                  f'{format_error_rate(total_word_dist, total_word_ref, total_word_sub, total_word_ins, total_word_del)}')
-            print(f'[summary] SER(word)  : '
-                  f'{format_ser(n_word_sent_err, n_sent_total)}')
+    if n_sent_total > 0 and total_phone_ref > 0:
+        print(f'[summary] PER  : '
+              f'{format_error_rate(total_phone_dist, total_phone_ref, total_phone_sub, total_phone_ins, total_phone_del)}')
+        print(f'[summary] SER(phone) : '
+              f'{format_ser(n_phone_sent_err, n_sent_total)}')
+    if ref_mlf and n_sent_total > 0 and lex and total_word_ref > 0:
+        print(f'[summary] WER  : '
+              f'{format_error_rate(total_word_dist, total_word_ref, total_word_sub, total_word_ins, total_word_del)}')
+        print(f'[summary] SER(word)  : '
+              f'{format_ser(n_word_sent_err, n_sent_total)}')
 
     print('=' * 72)
 

@@ -54,13 +54,8 @@ class Ubctc(nn.Module):
             return loss, loss, loss
         else:
             logit = logit.squeeze().permute((1, 0))
-            # t=ctc_label.shape[1]
-            # tt=t//4+1 if t % 4 > 0 else t//4
-            # print(t, tt, logit.shape, ctc_label.shape, meta["att_label"], meta["label_ce"].shape, meta["label_ce"])
-            # ctc_label = ctc_label[:,:tt]
-            # print(t, tt, ctc_label.shape)
             acc = self.accuracy(logit, ctc_label)
-            return acc, acc, acc
+            return acc, logit
         
 class Encoder(nn.Module):
     def __init__(self):

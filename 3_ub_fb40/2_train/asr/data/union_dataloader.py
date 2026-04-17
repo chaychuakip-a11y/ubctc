@@ -2,7 +2,10 @@
 import torch
 import numpy as np
 import random
-import delta
+try:
+    import delta
+except ImportError:
+    delta = None
 import copy
 
 from torch.utils.data import DataLoader, Dataset

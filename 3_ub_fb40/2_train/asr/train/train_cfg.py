@@ -619,9 +619,8 @@ class Train():
                 train_iternums.append(train_iternum_)
                 self.data_infos[data_add]["train_iternum"] = train_iternum_
 
-        # # 使用最大的train_iternum，保证每个数据集至少过一遍
-        # train_iternum = max(train_iternums[1:])
-        train_iternum = train_iternums[-1]
+        # 使用最大的train_iternum，保证主数据集（DataSetting）至少过一遍
+        train_iternum = max(train_iternums)
 
 
         if self.__is_inited:
