@@ -55,7 +55,9 @@ class Ubctc(nn.Module):
         else:
             logit = logit.squeeze().permute((1, 0))
             acc = self.accuracy(logit, ctc_label)
-            return acc, logit
+            if not isinstance(acc, torch.Tensor):
+                acc = torch.tensor(float(acc))
+            return acc, acc, logit
         
 class Encoder(nn.Module):
     def __init__(self):
