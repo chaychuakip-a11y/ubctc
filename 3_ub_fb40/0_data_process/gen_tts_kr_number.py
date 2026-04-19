@@ -160,9 +160,17 @@ def sox_time_stretch(in_wav: str, out_wav: str, factor: float) -> None:
 
 # ─── TTS generation ──────────────────────────────────────────────────────────
 
-async def synthesize_ssml(ssml: str, voice: str, out_mp3: str) -> None:
-    communicate = edge_tts.Communicate(ssml, voice)
-    await communicate.save(out_mp3)
+async def synthesize_ssml(ssml: str, voice: str, out_mp3: str, max_retries: int = 5) -> None:
+    for attempt in range(max_retries):
+        try:
+            communicate = edge_tts.Communicate(ssml, voice)
+            await communicate.save(out_mp3)
+            return
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise
+            wait = 2 ** attempt + random.uniform(0, 1)
+            await asyncio.sleep(wait)
 
 
 async def generate_variant(
@@ -173,6 +181,8 @@ async def generate_variant(
     template: str,
     wav_path: str,
 ) -> None:
+    if os.path.exists(wav_path):  # resume: skip already done
+        return
     ssml = make_ssml(text_kr, rate, template)
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tf:
         mp3_path = tf.name
@@ -180,7 +190,8 @@ async def generate_variant(
         await synthesize_ssml(ssml, voice, mp3_path)
         mp3_to_wav16k(mp3_path, wav_path)
     finally:
-        os.unlink(mp3_path)
+        if os.path.exists(mp3_path):
+            os.unlink(mp3_path)
 
 
 # ─── main ────────────────────────────────────────────────────────────────────
@@ -323,8 +334,8 @@ def main():
                     help="TTS variants per utterance before stretch (default: 5)")
     ap.add_argument("--stretch", action="store_true",
                     help="Also generate sox time-stretch variants (0.9/1.1/1.2x)")
-    ap.add_argument("--jobs", type=int, default=8,
-                    help="Concurrent TTS requests (default: 8)")
+    ap.add_argument("--jobs", type=int, default=4,
+                    help="Concurrent TTS requests (default: 4)")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
