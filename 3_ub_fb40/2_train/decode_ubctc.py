@@ -157,18 +157,23 @@ def _logsumexp2(a: float, b: float) -> float:
     return m + math.log(math.exp(a - m) + math.exp(b - m))
 
 
-def ctc_prefix_beam_decode(log_probs: torch.Tensor, blank_id: int, beam_size: int = 10):
+def ctc_prefix_beam_decode(log_probs: torch.Tensor, blank_id: int, beam_size: int = 10,
+                           bias_ids=None, bias_value: float = 0.0):
     """
-    CTC prefix beam search.
+    CTC prefix beam search with optional per-token additive log-prob bias.
 
     State:  dict{ prefix_tuple -> (log_prob_b, log_prob_nb) }
       log_prob_b  : log probability of this prefix ending with a blank
       log_prob_nb : log probability of this prefix ending with a non-blank
 
     Args:
-        log_probs : (T, num_class) tensor
-        blank_id  : index of the blank label
-        beam_size : number of active hypotheses
+        log_probs  : (T, num_class) tensor
+        blank_id   : index of the blank label
+        beam_size  : number of active hypotheses
+        bias_ids   : iterable of token ids to receive an additive log-prob bias
+                     (e.g. the 10 Korean digit ids 일이삼사오육칠팔구공). None → no bias.
+        bias_value : log-space additive bias applied to every frame for the ids above.
+                     0.4 ≈ ×1.5, 0.7 ≈ ×2, 1.0 ≈ ×2.7. Blank is never biased.
 
     Returns:
         List[int] of decoded token IDs (best hypothesis)
@@ -176,6 +181,13 @@ def ctc_prefix_beam_decode(log_probs: torch.Tensor, blank_id: int, beam_size: in
     NEG_INF = float('-inf')
     lp = log_probs.cpu().float().numpy()          # (T, num_class)
     T, num_class = lp.shape
+
+    if bias_ids and bias_value != 0.0:
+        lp = lp.copy()
+        for cid in bias_ids:
+            if cid == blank_id:
+                continue
+            lp[:, cid] += bias_value
 
     # {prefix: (prob_b, prob_nb)}
     beams = {(): (0.0, NEG_INF)}                  # empty prefix starts with prob_b=0
@@ -231,7 +243,9 @@ def ctc_prefix_beam_decode(log_probs: torch.Tensor, blank_id: int, beam_size: in
 def decode_utterance(model: Ubctc, feat: np.ndarray, device: torch.device,
                      decode_mode: str = 'greedy',
                      beam_size: int = 10,
-                     blank_id: int = 9003):
+                     blank_id: int = 9003,
+                     bias_ids=None,
+                     bias_value: float = 0.0):
     """
     Run encoder → classification → CTC decode for one utterance.
 
@@ -277,7 +291,8 @@ def decode_utterance(model: Ubctc, feat: np.ndarray, device: torch.device,
     if decode_mode == 'greedy':
         hyp = ctc_greedy_decode(log_probs, blank_id)
     elif decode_mode == 'beam':
-        hyp = ctc_prefix_beam_decode(log_probs, blank_id, beam_size)
+        hyp = ctc_prefix_beam_decode(log_probs, blank_id, beam_size,
+                                     bias_ids=bias_ids, bias_value=bias_value)
     else:
         raise ValueError(f"Unknown decode mode: {decode_mode!r}. Choose 'greedy' or 'beam'.")
 
@@ -338,6 +353,16 @@ def main():
                         help='Blank label ID  (num_class - 1)')
     parser.add_argument('--gpu', type=int, default=-1,
                         help='GPU device id (-1 for CPU)')
+    parser.add_argument('--bias-ids', default='',
+                        help='Comma-separated token IDs to receive a log-prob bias '
+                             '(e.g. the 10 Korean digit ids for 일이삼사오육칠팔구공). '
+                             'Beam mode only.')
+    parser.add_argument('--bias-tokens', default='',
+                        help='Comma-separated tokens to bias (resolved via --dict). '
+                             'Merged with --bias-ids. Tokens missing from the dict are skipped with a warning.')
+    parser.add_argument('--bias-value', type=float, default=0.0,
+                        help='Additive log-prob bias for the tokens above. '
+                             '0.4 ≈ ×1.5, 0.7 ≈ ×2.0, 1.0 ≈ ×2.7. 0.0 disables.')
     args = parser.parse_args()
 
     # --- Device ---
@@ -366,8 +391,31 @@ def main():
         feat = feat[:, np.newaxis]
     print(f'[decode] feat shape    : {feat.shape}  (T={feat.shape[0]}, dim={feat.shape[1]})')
 
+    # --- Bias resolution ---
+    bias_ids = set()
+    if args.bias_ids:
+        bias_ids.update(int(x) for x in args.bias_ids.split(',') if x.strip())
+    if args.bias_tokens:
+        if id2tok is None:
+            print('[warn] --bias-tokens ignored: --dict is required to resolve token strings',
+                  file=sys.stderr)
+        else:
+            tok2id = {v: k for k, v in id2tok.items()}
+            for t in (s.strip() for s in args.bias_tokens.split(',')):
+                if not t:
+                    continue
+                if t in tok2id:
+                    bias_ids.add(tok2id[t])
+                else:
+                    print(f'[warn] bias token {t!r} not in dict, skipped', file=sys.stderr)
+
     # --- Decode ---
     mode_str = args.mode + (f' (beam={args.beam})' if args.mode == 'beam' else '')
+    if bias_ids and args.bias_value != 0.0:
+        if args.mode != 'beam':
+            print('[warn] --bias-* has no effect outside beam mode', file=sys.stderr)
+        else:
+            mode_str += f' (bias {len(bias_ids)} ids @ {args.bias_value:+.2f})'
     print(f'[decode] mode          : {mode_str}')
 
     hyp, log_probs = decode_utterance(
@@ -375,6 +423,8 @@ def main():
         decode_mode=args.mode,
         beam_size=args.beam,
         blank_id=args.blank,
+        bias_ids=bias_ids if bias_ids else None,
+        bias_value=args.bias_value,
     )
 
     # --- Output ---
