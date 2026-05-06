@@ -2,3 +2,7 @@ tmp/
 *.bak
 *.tar.gz
 *.zip
+
+# TTS 生成的 wav 数据走 Google Drive，不进 git
+tts_num_10k/wav/
+tts_num_10k/**/*.wav
