@@ -1,4 +1,5 @@
 # by pcli2 2019 Dec
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,6 +12,31 @@ from typing import List, Tuple, Dict
 from asr.functions import xavier
 from asr.train import Trainer
 
+
+def _build_ctc_loss(blank_id=9003):
+    """Choose between standard CTC loss and Coda-weighted CTC loss via env vars.
+
+    Env vars (set before launching train.py):
+        CODA_MASK_PATH : path to coda_senone_mask.pt (bool tensor of length vocab_size)
+        CODA_BOOST     : float, log-space boost for coda senones (e.g. 1.1 = log(3))
+                         If unset or 0, falls back to standard CTC loss.
+
+    Keeping this as env-var driven avoids changing the train.py / config plumbing
+    while letting us A/B coda weighting cleanly.
+    """
+    mask_path = os.environ.get('CODA_MASK_PATH', '').strip()
+    boost = float(os.environ.get('CODA_BOOST', '0') or '0')
+    if mask_path and boost > 0 and os.path.exists(mask_path):
+        coda_mask = torch.load(mask_path)
+        if not isinstance(coda_mask, torch.Tensor) or coda_mask.dtype != torch.bool:
+            coda_mask = torch.as_tensor(coda_mask, dtype=torch.bool)
+        print(f"[net_ubctc] Using CodaWeightedCTCLoss: mask={mask_path} "
+              f"true_count={int(coda_mask.sum().item())}/{coda_mask.numel()} boost={boost}", flush=True)
+        return CodaWeightedCTCLoss(blank_id, coda_mask, coda_boost=boost)
+    print(f"[net_ubctc] Using standard CTCLoss(blank={blank_id})", flush=True)
+    return CTCLoss(blank_id)
+
+
 class Ubctc(nn.Module):
     def __init__(self):
         super(Ubctc, self).__init__()
@@ -19,7 +45,7 @@ class Ubctc(nn.Module):
         self.classification = nn.Conv2d(256, 9004, 1, 1, 0)
         xavier(self.classification.weight)
         nn.init.zeros_(self.classification.bias.data)
-        self.loss = CTCLoss(9003)
+        self.loss = _build_ctc_loss(9003)
         self.accuracy = AccCtc()
 
     def forward(self, x: torch.Tensor, meta:Dict[str, torch.Tensor]):

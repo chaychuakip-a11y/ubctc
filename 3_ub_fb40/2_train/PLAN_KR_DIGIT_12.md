@@ -16,12 +16,11 @@
 
 | 数据集 | 量 | 状态 |
 |---|---|---|
-| 通用韩语 500h | 500h | 已制 pfile（`/yrfs4/.../lib_fb40/`） |
-| 车载安静 | 8h | pfile 路径待填（`PLACEHOLDER_CAR_PFILE_DIR`） |
-| TTS 联系人（增强后） | 39h | pfile 路径待填 |
-| TTS 号码（增强后） | 78h | pfile 路径待填 |
-| **真人车载 clean** | **10.5h** | **正在制 pfile** |
-| **真人车载 RIR** | **10.5h** | **正在制 pfile** |
+| 主集（通用 400h + 车载 400h，离线仿真） | ~800h | 已制 pfile（`/yrfs4/.../lib_fb40/`） |
+| 真人车载 legacy（0416 遗留） | ~80 条 | 单独成 section，Rate=0.05，pfile 路径待填 |
+| TTS 合并（Contact 39h + Num 78h，增强后） | ~117h | pfile 路径待填（合一个 section） |
+| **真人车载 clean** | **10.5h × 2.8 = 29.4h（增强后）** | **正在制 pfile** |
+| **真人车载 RIR** | **4h** | **正在制 pfile** |
 | 真人 1/2 hard-case 子集 | 待抽 | 抽取脚本待写 |
 
 ## 2. 已完成（commit 历史）
@@ -35,30 +34,42 @@
   - `decode_ubctc.py` 加 `--bias-ids/--bias-tokens/--bias-value`，CTC prefix beam 支持数字 boosting
   - `config_car_tts.ini` 升级到 0507 版本：LR 0.0003→0.00015、Iter 20→12、Half 6→4
   - `config_car_tts.ini` 拆出三个真人数据 section：Clean / RIR / 12Hard，路径留 PLACEHOLDER
-  - 新 `Rates`：通用 0.25 / 车载 0.5 / TTS 联系人 0.05 / TTS 号码 0.05 / 真人 Clean 0.6 / 真人 RIR 0.6 / 真人 12Hard 0.3
+  - 新 `Rates`（DataSetting 必须首位、Rate=1.0 作锚点；其余为相对权重）：
+    - DataSetting（主集 800h 通用+车载） **1.0**
+    - DataSettingTTS（合并）**0.4**
+    - DataSettingCarRealLegacy（0416 遗留）**0.2**
+    - DataSettingCarRealClean（29.4h）**2.4**
+    - DataSettingCarRealRIR（4h）**0.4**
+    - ~~DataSettingCarReal12Hard~~ 暂去掉（pfile 待制作），就绪后加回 Rate=1.2
 
 ## 3. TODO（按依赖顺序，跨机器衔接看这里）
+
+**主路线**：**A**（填 pfile 路径 + 抽 hard-case）→ **C**（启动 0507 训练 + 评估）。如不达标，进 **D**（声学侧 fallback 三阶段）。**B**（WFST 团队对接）并行推进，不阻塞主路线。
 
 ### A. 等 pfile 完成后再做
 
 - [ ] **A1** 拿到真人 10.5h clean pfile 路径 → 填 `PLACEHOLDER_CAR_REAL_CLEAN_PFILE_DIR`
 - [ ] **A2** 拿到真人 10.5h RIR pfile 路径 → 填 `PLACEHOLDER_CAR_REAL_RIR_PFILE_DIR`
-- [ ] **A3** 1/2 hard-case 子集抽取
+- [ ] **A3**（暂跳过）1/2 hard-case 子集抽取 + pfile — 当前 0507 训练**不含 12Hard**，待此项就绪后再加回（取消注释 [DataSettingCarReal12Hard]，TrainDatas+Rates 加回 1.2）
   - 输入：真人 10.5h 的 text + utt 列表
   - 命令草稿：`grep -E '(^|[^ㄱ-ㅎ가-힣])(일|이)([^ㄱ-ㅎ가-힣]|$)' text.list | awk '{print $1}' > car_real_12hard.uttlist`
   - 用同一套 pipeline 单独制 pfile → 填 `PLACEHOLDER_CAR_REAL_12HARD_PFILE_DIR`
-- [ ] **A4** 检查并填其它 3 个 PLACEHOLDER（CarPfile / TTSContact / TTSNum），上一轮 0416 应该有路径，去 `OutDir = kr_car_tts_0416` 或 git log 找
+- [ ] **A4** 检查并填其它 2 个 PLACEHOLDER（TTS 合并 / CarRealLegacy），上一轮 0416 应该有路径，去 `OutDir = kr_car_tts_0416` 或 git log 找
 - [ ] **A5** smoke test：跑 1 个 iter，确认 7 个 dataset 的 batch 都进得来，特别注意 CarReal12Hard 的 `CVSentNum=0` 不会触发边界问题
 
-### B. 不依赖训练，今天就能 A/B（最高 ROI）
+### B. WFST 团队对接需求（解码侧线上是 WFST，原 Python boosting 搁置）
 
-- [ ] **B1** 找出韩语字典里 일/이/삼/사/오/육/칠/팔/구/공 这 10 个 token 的 ID
-  - 字典文件位置：上一轮 decode 用过，去 `1.run.sh` / `decode.sh` / `train.sh` 看 `--dict` 参数
-  - 或：`grep -nE '^(일|이|삼|사|오|육|칠|팔|구|공)\s' <dict>`
-- [ ] **B2** 用旧模型（`kr_car_tts_0416/model.iterX.partY`）+ beam decode + bias 跑测试集
-  - 命令：`python decode_ubctc.py --model <旧模型> --feat <utt.npy> --dict <字典> --mode beam --beam 10 --bias-tokens "일,이,삼,사,오,육,칠,팔,구,공" --bias-value 0.4`
-  - 试 0.0 / 0.4 / 0.7 / 1.0 四档，看 1/2 召回 vs 误激活的 trade-off
-- [ ] **B3** 如果 B2 单独就把 1/2 拉回来，重训目标降级；否则按 A 计划继续
+**背景**：线上解码用 WFST，`decode_ubctc.py --bias-tokens` 仅是离线 A/B 工具不会上线。原 B 节（Python beam + bias 跑 baseline 验证可 boost 多少回报）当前跑不起来且暂无时间修复，搁置。以下诉求需 WFST 团队落地：
+
+- [ ] **B1** **Contextual bias FST**：检测到"打电话/번호/전화" 等触发词后，对号码 token (일이삼사오육칠팔구공) 路径加权 +0.4~+0.7
+- [ ] **B2** **格式约束 + N-best 后处理**：号码场景数字 token 必须连续 N 位（韩国手机 11 位），不合法回退第二候选
+- [ ] **B3** **Class-based LM**：电话号码作为 class，电话场景下提升 class 先验
+- [ ] **B4** **Confusion pair 显式建模**：LM 里给 (일, 이) 加双向 fallback path
+- [ ] **B5** **场景化 HCLG**：车载电话场景专用 graph，与通用域分离
+
+**优先级**：B1 > B2 > B3 > B4 > B5（B1+B2 即可覆盖大部分场景，B3-B5 是后置增量）
+
+**当 Python boosting 修好后**：仍可作为离线工具用来定上限 — 跑 +0.0/0.4/0.7/1.0 四档看 1/2 召回 vs 误激活 trade-off，把最优 bias_value 当作 B1 的参数提给 WFST 团队
 
 ### C. 训练 + 评估
 
@@ -71,17 +82,34 @@
   - 通用域 CV（防 regression）
 - [ ] **C4** 如效果好，把 boosting (B2) 的最优 bias_value 写入默认 decode.sh
 
-### D. 后续可选优化（按 ROI 排）
+### D. 0507 不达标后的 fallback 路线图（按声学侧 ROI 排序）
 
-- [ ] **D1** 离线加噪 SNR 多档：0/5/10/15/20dB（当前只有 5dB）
-- [ ] **D2** 离线变速 0.9/1.0/1.1/1.2x（当前只有 1.2x）
-- [ ] **D3** 把 일 label 显式拆成 "이+ㄹ" 强迫模型建模尾音（要改字典+重制 lab pfile）
-- [ ] **D4** Phoneme-level 辅助 CTC head
-- [ ] **D5** fb40 → fb80 + pitch（成本高，先观察 D1-D4）
-- [ ] **D6** MWER / sequence-level fine-tune（CTC 完全收敛后）
+**前提**：解码不在我们控制范围（WFST 团队管，见 B 节），所有改动靠 acoustic + 数据 + loss。原"可选优化"升级为明确路线图：训完 0507 评估若不达标，按阶段顺序推进。
+
+#### D 阶段 1 — 数据/采样调整（不改模型结构，复用 0507 训练框架）
+- [ ] **D1.1** **Hard negative mining**：用 0507 模型扫真人 10.5h，把 1/2 错分 utt 单独抽成 section，Rate=0.5
+- [ ] **D1.2** **类别加权 CTC loss**：含 일/이 的帧 loss × 2~3，需改 `train_fun.py` loss 计算
+- [ ] **D1.3** **TTS voice 大幅扩量**：voice 多样性 > 合成时长，目标 20+ 不同发音风格 voice（针对"边界过清晰"问题）
+- [ ] **D1.4** 离线多档 SNR：扩到 0/5/10/15/20dB（原 D1，当前只有 5dB）
+- [ ] **D1.5** 离线多档变速：扩到 0.9/1.0/1.1/1.2x（原 D2，当前只有 1.2x）
+
+#### D 阶段 2 — 针对 1/2 根因的模型/loss 改动
+- [ ] **D2.1** **Phoneme/Jamo 辅助 CTC head**（原 D4）：韩语 Jamo 拆分（초성/중성/종성），给 ㄹ 单独监督信号 — **针对 1/2 根因最直接**
+- [ ] **D2.2** **主动学习**：用 0507 模型扫未标注车载，挑 confidence 低样本送标注扩量
+
+#### D 阶段 3 — 重型武器（成本高，最后考虑）
+- [ ] **D3.1** fb40 → fb80 + pitch（原 D5）：尾音能量低，更高分辨率特征理论上有帮助
+- [ ] **D3.2** MWER / sequence-level fine-tune（原 D6）：CTC 完全收敛后再做
+- [ ] **D3.3** 字典级 일 → "이+ㄹ" 拆分（原 D3）：根因解法但改动巨大，重制字典 + lab pfile
+- [ ] **D3.4** 教师蒸馏：通用 500h + 大数据 teacher 蒸到 student
+
+**升级触发条件**：
+- 阶段 1 → 2：D1 全做完且 1/2 错误率仍 > 5%
+- 阶段 2 → 3：D2 全做完且 1/2 错误率仍 > 3%
 
 明确**不做**：
 - ~~AMR-NB / 8k 上采样模拟通话失真~~ — 车机近场采集，与训练数据格式一致，引入退化反而拉大 train/test gap
+- ~~Python decode_ubctc.py boosting 上线~~ — 线上是 WFST，需求改走 B 节
 
 ## 4. 关键路径速查
 
