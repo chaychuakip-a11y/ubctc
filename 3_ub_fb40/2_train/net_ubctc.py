@@ -26,7 +26,10 @@ def _build_ctc_loss(blank_id=9003):
     """
     mask_path = os.environ.get('CODA_MASK_PATH', '').strip()
     boost = float(os.environ.get('CODA_BOOST', '0') or '0')
-    if mask_path and boost > 0 and os.path.exists(mask_path):
+    # boost != 0 (allow negative, which subtracts from coda dims to penalize
+    # coda alignment paths and force model to compensate by emitting higher
+    # coda log-prob)
+    if mask_path and boost != 0 and os.path.exists(mask_path):
         coda_mask = torch.load(mask_path)
         if not isinstance(coda_mask, torch.Tensor) or coda_mask.dtype != torch.bool:
             coda_mask = torch.as_tensor(coda_mask, dtype=torch.bool)
