@@ -94,7 +94,17 @@
 - [ ] **D1.5** 离线多档变速：扩到 0.9/1.0/1.1/1.2x（原 D2，当前只有 1.2x）
 
 #### D 阶段 2 — 针对 1/2 根因的模型/loss 改动
-- [ ] **D2.1** **Phoneme/Jamo 辅助 CTC head**（原 D4）：韩语 Jamo 拆分（초성/중성/종성），给 ㄹ 单独监督信号 — **针对 1/2 根因最直接**
+- [x] ~~**D2.0** **Coda-weighted CTC loss**（log_prob shift on coda senones）~~
+      **2026-05-08 实验关闭**：±1.1 两个方向都试过，机制本质是 **CTC 先验偏移**而非判别能力提升：
+      - +1.1: 模型整体少输出 ll → 1→2 错+50%、2→1 错-60%、句准 +1.25（来自插入下降的副作用）
+      - -1.1: 模型整体多输出 ll → 1→2 错-17%、2→1 错+60%、句准 +0.00
+      **结论**：CTC log_prob shift 不能解决 coda 判别问题，**+1.1 模型作为新 baseline 锁定**，转 D2.1
+- [ ] **D2.1** **Phoneme 级辅助 head**（基于现有 phoneme 词典 `삼\tss aa mm`，不做 Jamo 拆分）
+      - 主 senone head（9004）保留 + 辅助 phoneme head（~15 个：ll/mm/ng/kg_coda + 元音 + onset）
+      - 主 CTC + 辅助 CTC，权重 0.3
+      - 共享 encoder，推理只用主 head，**WFST/LM 完全不动**
+      - 机制干净：辅助 loss 直接监督 phoneme 级输出，不通过 alignment 偏移
+      - **针对 1/2、3/4、7/8 同时受益**（不再局限于单纯 coda）
 - [ ] **D2.2** **主动学习**：用 0507 模型扫未标注车载，挑 confidence 低样本送标注扩量
 
 #### D 阶段 3 — 重型武器（成本高，最后考虑）
@@ -129,3 +139,8 @@
 - **LR 从 0.0003 降到 0.00015**：上一轮经验是 0.0001 太低、0.0003 偏高，取中
 - **Iter 12 而非 20**：fine-tune 收益主要在前 8-10 轮，多训易过拟合到车载小数据
 - **CarReal12Hard `CVSentNum=0`**：子集太小，UnionDataLoader 在 batch_num<=0 时会报边界问题（参考 `train_fun.py:308`）
+- **2026-05-08 关闭 Coda-weighted CTC loss 探索**：±1.1 两个方向都验证为 CTC 先验偏移机制，
+  非判别能力提升。+1.1 模型 (实车 86.5→87.75) 作为新 baseline 锁定，转 D2.1 phoneme aux head。
+  - +1.1 失败原因：coda alignment 路径变便宜，模型不需要学就能匹配 → 模型反而少输出 coda
+  - -1.1 失败原因：先验偏移到另一侧，2→1 误加 +60% 抵消了 1→2 的改善
+  - 教训：**通过 CTC log_prob shift 调先验不能教模型判别**，必须用独立的辅助监督信号
