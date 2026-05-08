@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.jit as jit
 from torch.jit import Final
 
@@ -90,3 +91,61 @@ class CodaWeightedCTCLoss(nn.Module):
         # Re-normalize across vocab dim to keep proper log-probs
         boosted = boosted - boosted.logsumexp(dim=-1, keepdim=True)
         return self.ctcLoss(boosted, ctc_list, x_len, ctc_len)
+
+
+class CodaWeightedCeLoss(nn.Module):
+    """
+    Frame-level cross-entropy loss with extra weight on coda senones.
+
+    Use case: HMM-DNN hybrid auxiliary supervision. Each frame has a
+    senone target (from forced alignment / pfile celabel). Coda senones
+    (ll, mm, ng, kg-coda for Korean digits) get a multiplicative weight
+    on their per-frame CE loss, giving the model stronger gradient signal
+    on the under-learned coda dimensions.
+
+    This is a clean alternative to CodaWeightedCTCLoss — it does NOT
+    interfere with CTC alignment, just provides direct frame-level
+    supervision in parallel.
+
+    Args:
+        coda_mask: bool tensor [vocab_size], True at coda senone IDs
+        coda_weight: multiplier on per-frame loss when target is coda
+                     (default 3.0)
+        ignore_index: padding label value to ignore (default -1)
+    """
+    def __init__(self, coda_mask, coda_weight=3.0, ignore_index=-1):
+        super(CodaWeightedCeLoss, self).__init__()
+        self.coda_weight = float(coda_weight)
+        self.ignore_index = ignore_index
+        self.register_buffer('coda_mask', coda_mask, persistent=False)
+
+    def forward(self, logits, target):
+        """
+        logits: [N, V] raw logits (before softmax)
+        target: any shape, will be flattened to [N]; values in [0, V)
+                or == ignore_index (-1) for padding
+        """
+        target_flat = target.reshape(-1).long()
+
+        # Per-frame CE; ignore_index frames contribute 0
+        ce_per_frame = F.cross_entropy(
+            logits, target_flat,
+            ignore_index=self.ignore_index,
+            reduction='none'
+        )
+
+        # Build per-frame weight (coda_weight at coda frames, 1.0 elsewhere)
+        with torch.no_grad():
+            valid_mask = (target_flat != self.ignore_index)
+            safe_target = target_flat.clamp(min=0)  # avoid -1 indexing
+            is_coda = self.coda_mask[safe_target]
+            weights = torch.where(
+                is_coda,
+                torch.tensor(self.coda_weight, device=logits.device, dtype=logits.dtype),
+                torch.tensor(1.0, device=logits.device, dtype=logits.dtype)
+            )
+            weights = weights * valid_mask.to(logits.dtype)
+
+        # Weighted mean over valid frames
+        denom = weights.sum().clamp(min=1.0)
+        return (ce_per_frame * weights).sum() / denom
