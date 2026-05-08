@@ -149,11 +149,24 @@ def mp3_to_wav16k(mp3_path: str, wav_path: str) -> None:
 
 def sox_time_stretch(in_wav: str, out_wav: str, factor: float) -> None:
     """
-    Time-stretch without pitch change using sox 'tempo -s'.
+    Time-stretch without pitch change using ffmpeg atempo filter.
     factor > 1 → faster; factor < 1 → slower.
+    atempo only accepts 0.5~2.0, chain filters for out-of-range values.
     """
+    # Build atempo filter chain (each stage clamped to [0.5, 2.0])
+    stages = []
+    f = factor
+    while f > 2.0:
+        stages.append("atempo=2.0")
+        f /= 2.0
+    while f < 0.5:
+        stages.append("atempo=0.5")
+        f *= 2.0
+    stages.append(f"atempo={f:.6f}")
+    af = ",".join(stages)
     subprocess.run(
-        ["sox", in_wav, out_wav, "tempo", "-s", str(factor)],
+        ["ffmpeg", "-y", "-i", in_wav, "-filter:a", af,
+         "-ar", "16000", "-ac", "1", "-sample_fmt", "s16", out_wav],
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 
@@ -258,24 +271,35 @@ async def process_utterance(
         wav_path = wav_dir / f"{var['utt_id']}.wav"
         if var["stretch"] != 1.0:
             return  # handled after base wavs are done
-        async with semaphore:
-            await generate_variant(
-                var["utt_id"], text_kr,
-                var["voice"], var["rate"], var["template"],
-                str(wav_path),
-            )
-        if base_wav is None:
+        if wav_path.exists() and wav_path.stat().st_size > 0:
             base_wav = str(wav_path)
+            return  # skip already generated
+        try:
+            async with semaphore:
+                await generate_variant(
+                    var["utt_id"], text_kr,
+                    var["voice"], var["rate"], var["template"],
+                    str(wav_path),
+                )
+            if base_wav is None:
+                base_wav = str(wav_path)
+        except Exception as e:
+            # Don't let one TTS failure kill the whole batch — log + skip
+            print(f"  FAIL {var['utt_id']}: {type(e).__name__}: {str(e)[:120]}", flush=True)
 
-    await asyncio.gather(*[gen(v) for v in variants if v["stretch"] == 1.0])
+    # return_exceptions=True: a single failure won't cancel sibling tasks
+    await asyncio.gather(*[gen(v) for v in variants if v["stretch"] == 1.0],
+                         return_exceptions=True)
 
-    # Apply sox stretch to base wav
+    # Apply ffmpeg stretch to base wav
     for var in variants:
         if var["stretch"] == 1.0:
             continue
         if base_wav is None:
             continue
         wav_path = wav_dir / f"{var['utt_id']}.wav"
+        if wav_path.exists() and wav_path.stat().st_size > 0:
+            continue  # skip already generated
         sox_time_stretch(base_wav, str(wav_path), var["stretch"])
 
     # Record manifest
