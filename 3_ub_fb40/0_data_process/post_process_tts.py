@@ -181,7 +181,8 @@ def main():
     # Step 1: wait
     manifest = out_dir / "manifest.txt"
     if args.no_wait and manifest.exists():
-        print(f"--no-wait: using existing manifest ({sum(1 for l in manifest.read_text().splitlines() if l.strip())} entries)")
+        n_entries = sum(1 for l in manifest.read_text(encoding="utf-8").splitlines() if l.strip())
+        print(f"--no-wait: using existing manifest ({n_entries} entries)")
     else:
         manifest = wait_for_completion(out_dir, args.poll)
 
